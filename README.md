@@ -616,6 +616,27 @@ Destroying test database for alias 'default'...
 (venv)$\gke-django-tutorial\backend\python manage.py collectstatic
 ```
 
+#### requirements.txt
+
+仮想環境にインストールしたPythonパッケージをrequirements.txtにまとめておきます。
+
+```sh
+# 静的ファイル用ディレクトリ
+(venv)$\gke-django-tutorial\backend\python -m pip freeze > requirements.txt
+```
+
+実行するとbackend/下にrequirements.txtが作成されます。
+
+```txt
+asgiref==3.2.7
+Django==3.0.5
+django-cors-headers==3.2.1
+djangorestframework==3.11.0
+python-dotenv==0.13.0
+pytz==2019.3
+sqlparse==0.3.1
+```
+
 ### Frontendの開発を進める
 
 新しいコマンドプロンプトを開いてReactのプロジェクトを開始していきます。
@@ -684,7 +705,7 @@ class App extends Component {
     return (
       <div>
         {this.state.todo.map(item => (
-          <div>
+          <div key={item.id}>
             <h1>{item.title}</h1>
             <p>{item.body}</p>
           </div>
@@ -700,11 +721,257 @@ export default App;
 
 これローカル環境でfronendからbarckendへのapiを叩いてtodoリスト一覧を表示させることができました。
 
-### Docker化
+## Docker化
 
 次はこれをDocker化していきます。
 frontend, backendそれぞれにDockerfileを作成してbackendコンテナ、frontendコンテナを作成します。
+開発環境はdocker-composeで構築するように進めていきます。
 
 docker-composeで立ち上げられるところまでを考えていきます。
 
-#### backendのDocker化
+### backendのDocker化
+
+#### settings.py
+
+backendをdockerコンテナ化する際に環境変数は`.env`で指定することができます。
+これまでは`python-dotenv`で`.env`ファイルを参照していましたが、環境変数を参照するように
+変更しましょう。
+
+まずは`config/local_settings.py`を変更します。
+
+```python
+# config/local_settings.py
+from .settings import *
+
+SECRET_KEY = os.environ.get('SECRET_KEY')  # 追加
+
+DEBUG = True
+
+ALLOWED_HOSTS = ['*']
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+    }
+}
+```
+
+```python
+# config/settings.py
+import os
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('SECRET_KEY')  # 変更
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = os.environ.get('DEBUG')  # 変更
+
+```
+
+GKEデプロイ時にはCloudSQLを使用します。その時にDATABASE部分は変更します。
+
+#### Dockerfile
+
+Dockerfileを作っていきます。
+
+```sh
+# Dockerfileの作成
+$\gke-django-tutorial\backend\type null > Dockerfile
+```
+
+```Dockerfile
+# backend/Dockerfile
+
+# set base image
+FROM python:3.7
+
+# set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# set work directory
+RUN mkdir /code
+WORKDIR /code
+
+# install dependencies
+COPY requirements.txt /code/
+RUN python3 -m pip install --upgrade pip setuptools
+RUN pip install -r requirements.txt
+
+# Copy project
+COPY . /code/
+
+EXPOSE 8000
+
+```
+
+#### .dockerignore
+
+このままだと秘匿するべき`.env`ファイルも一緒にコピーされてしまいます。
+`.dockerignore`を追加して`.env`が追加されないようにします。
+
+```sh
+$\gke-django-tutorial\backend\type nul > .dockerignore
+```
+
+```dockerfile
+# .dockerignore
+.env
+```
+
+#### docker-compose.yml
+
+次にプロジェクトディレクトリにdocker-compose.ymlを設置して
+docker-compose upでbackendコンテナを起動できるようにします。
+
+```sh
+# docker-composeの作成
+$\gke-django-tutorial\type nul > docker-compose.yml
+```
+
+```yaml
+# docker-compose.yml
+version: "3.7"
+
+services:
+  backend:
+    env_file: ./backend/.env
+    build: ./backend/.
+    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
+    volumes:
+      - ./backend:/code
+    ports:
+      - "8000:8000"
+    stdin_open: true
+    tty: true
+    command: python /code/manage.py runserver 0.0.0.0:8000
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+```
+
+さっそく起動してみましょう。
+
+```sh
+$\gke-django-tutorial\docker-compose up
+Building backend
+Step 1/10 : FROM python:3.7
+ ---> b3b677605817
+
+=省略=
+
+Successfully built 153021f58015
+Successfully tagged gke-django-tutorial_v2_backend:latest
+WARNING: Image for service backend was built because it did not already exist. To rebuild this image you must use `docker-compose build` or `docker-compose up --build`.
+Creating gke-django-tutorial_v2_backend_1 ... done
+Attaching to gke-django-tutorial_v2_backend_1
+backend_1  | Watching for file changes with StatReloader
+backend_1  | Performing system checks...
+backend_1  |
+backend_1  | System check identified no issues (0 silenced).
+backend_1  | April 28, 2020 - 14:07:07
+backend_1  | Django version 3.0.5, using settings 'config.settings'
+backend_1  | Starting development server at http://0.0.0.0:8000/
+backend_1  | Quit the server with CONTROL-C.
+backend_1  | Session data corrupted
+```
+
+「先に`docker-compose up --build`せい」とwarningが出ましたが無事に起動できました。
+`http://localhost:8000/api/`にアクセスするとDjano Rest frameworkのAPI画面が確認できます。
+
+### frontendのDocker化
+
+つづいてfrontendのDocker化を行います。backendと同じようにfrontendディレクトリ下にDockerfileを作成し、docker-composeで起動させたいと思います。
+
+```sh
+# docker-composeの作成
+$\gke-django-tutorial\frontend\type nul > Dockerfile
+# .dockerignoreの作成
+$\gke-django-tutorial\frontend\type nul > .dockerignore
+```
+
+#### Dockerfile
+
+```Dockerfile
+# frontend/Dockerfile
+FROM node:12.14.1
+
+RUN mkdir /code
+WORKDIR /code
+
+# Install dependencies
+COPY package.json /code/
+COPY yarn.lock /code/
+RUN yarn install
+
+# Add rest of the client code
+COPY . /code/
+
+EXPOSE 3000
+```
+
+#### .dockerignore
+
+frontend に関しては `node_modules/` が巨大であるため、これをマウントしたりコピーしたりするとかなりの時間を要します。
+したがってfrontendの時と同じように`.dockerignore` を追加して node_modules をイメージビルドに使用しないようにしておきます。
+
+```.dockerignore
+/node_modules
+```
+
+#### docker-compose.yml
+
+```yaml
+# docker-compose.yml
+version: "3.7"
+
+services:
+  backend:
+    env_file: ./backend/.env
+    build: ./backend/.
+    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
+    volumes:
+      - ./backend:/code
+    ports:
+      - "8000:8000"
+    stdin_open: true
+    tty: true
+    command: python /code/manage.py runserver 0.0.0.0:8000
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+  frontend:
+    build: ./frontend/.
+    volumes:
+      - ./frontend:/code
+      - /code/node_modules
+    ports:
+      - "3000:3000"
+    command: yarn start
+    stdin_open: true
+    tty: true
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - NODE_ENV=development
+    depends_on:
+      - backend
+```
+
+frontendの`depends_on`とすることでbackendコンテナが立ち上がったあとにfrontendコンテナが
+起動するようになります。
+
+environment に`CHOKIDAR_USEPOLLING=true`を追加することでイメージを再ビルドすることなく
+ホットリローディングしてくれるようになります。
+
+さっそくビルドしてコンテナを起動し直してみます。
+
+
+```sh
+# docker-composeの作成
+$\gke-django-tutorial\docker-compose up --build
+```
+
+ビルドに時間がかかりますが、問題なく起動することができました。
+`http://localhost:3000`にアクセスすると元の画面が確認できます。
+
+## GKEへデプロイ
+

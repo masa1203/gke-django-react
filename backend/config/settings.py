@@ -11,25 +11,21 @@ https://docs.djangoproject.com/en/3.0/ref/settings/
 """
 
 import os
-from dotenv import load_dotenv  # 追加
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROJECT_DIR = os.path.basename(BASE_DIR)  # 追加
-
-# .envの読み込み
-load_dotenv(os.path.join(BASE_DIR, '.env'))  # 追加
+PROJECT_DIR = os.path.basename(BASE_DIR)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY')
+SECRET_KEY = os.environ.get('SECRET_KEY')  # 変更
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG')
+DEBUG = os.environ.get('DEBUG')  # 変更
 
-ALLOWED_HOSTS = ["*"]  # 変更
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition

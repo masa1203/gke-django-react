@@ -25,7 +25,7 @@ class App extends Component {
     return (
       <div>
         {this.state.todo.map(item => (
-          <div>
+          <div key={item.id}>
             <h1>{item.title}</h1>
             <p>{item.body}</p>
           </div>
