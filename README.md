@@ -259,7 +259,7 @@ MEDIA_URL = '/media/' # 追加
 ```sh:.env
 # .env
 SECRET_KEY = 'nz8t((i_mali=%0+z_g+uc**9dgky8)74slvs&6h$=9b^8t7$@'
-DEBUG = True
+DEBUG = False
 ```
 
 #### アプリケーションを追加する
@@ -478,7 +478,7 @@ json のやり取りを行わせるためのものです。
 `django-cors-headers`をインストールしましょう。
 
 ```sh
-python -m pip install django-cors-headers
+(venv)$\gke-django-tutorial\backend\python -m pip install django-cors-headers
 ```
 
 `config/settings.py`を更新します。
@@ -530,6 +530,38 @@ CORS_ORIGIN_WHITELIST = (
 )
 ```
 
+#### local_settings.py
+
+`config/settings.py`は本番環境に使用することを考慮し、`config/local_settings.py`を作成してローカル開発用に分けておきます。
+GKEデプロイ時にはCloudSQLを使用し、ローカルではsqlite3を使用するように、settings.pyを分けておくことで設定値を書き換えずに済みます。
+
+```sh
+# ファイルの作成
+(venv)$\gke-django-tutorial\backend\type null > config/local_settings.py
+```
+
+```python
+# config/local_settings.py
+from .settings import *
+
+DEBUG = True
+
+ALLOWED_HOSTS = ['*']
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+    }
+}
+```
+
+`config/local_settings.py`を使って開発用サーバーを起動しておきます。
+
+```sh
+(venv)$\gke-django-tutorial\backend\python manage.py runserver --settings config.local_settings
+```
+
 #### Tests
 
 テストを書きます。
@@ -560,7 +592,7 @@ class TodoModelTest(TestCase):
 ```
 
 ```sh
-$ python manage.py test
+(venv)$\gke-django-tutorial\backend\ python manage.py test
 Creating test database for alias 'default'...
 System check identified no issues (0 silenced).
 ..
@@ -573,11 +605,106 @@ Destroying test database for alias 'default'...
 
 うまくいったようです。
 
+#### 静的ファイル
+
+配信後に管理者機能のcssが反映されるように静的ファイルを集約しておきます。
+
+```sh
+# 静的ファイル用ディレクトリ
+(venv)$\gke-django-tutorial\backend\mkdir static
+# 静的ファイルの集約
+(venv)$\gke-django-tutorial\backend\python manage.py collectstatic
+```
+
 ### Frontendの開発を進める
 
 新しいコマンドプロンプトを開いてReactのプロジェクトを開始していきます。
 
 ```sh
-$\gke-django-tutorial\frontend\
-$\gke-django-tutorial\frontend\
+# ディレクトリ下にReactプロジェクトをたてる
+$\gke-django-tutorial\frontend\npx create-react-app .
+# Reactの開発用サーバーを立ち上げる
+$\gke-django-tutorial\frontend\yarn start
+yarn run v1.22.0
+$ react-scripts start
+i ｢wds｣: Project is running at http://192.168.11.8/
+i ｢wds｣: webpack output is served from
+i ｢wds｣: Content not from webpack is served from C:\Users\masayoshi\docker_project\gke-django-tutorial_v2\frontend\public
+i ｢wds｣: 404s will fallback to /
+Starting the development server...
+Compiled successfully!
+
+You can now view frontend in the browser.
+
+  Local:            http://localhost:3000
+  On Your Network:  http://192.168.11.8:3000
+
+Note that the development build is not optimized.
+To create a production build, use yarn build.
 ```
+
+`http://localhost:3000`にアクセスするとReactのWelcomeページが確認できます。
+
+APIをリクエストするのには`axios`を使います。
+
+```sh
+# ライブラリのインストール
+$\gke-django-tutorial\frontend\yarn add axios
+```
+
+#### App.js
+APIのエンドポイントは以下のような形でAPIを返してきます。
+
+```javascript
+// src/App.js
+import React from 'react';
+import axios from "axios";
+import './App.css';
+
+class App extends Component {
+  state = {
+    todo: []
+  };
+
+  componentDidMount() {
+    this.getTodos();
+  }
+
+  getTodos() {
+    axios
+      .get("http://localhost:8000/api/")
+      .then(res => {
+        this.setState({ todo: res.data });
+      })
+      .catch(err => {
+        console.log(err);
+      });
+  }
+  render() {
+    return (
+      <div>
+        {this.state.todo.map(item => (
+          <div>
+            <h1>{item.title}</h1>
+            <p>{item.body}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+}
+
+export default App;
+
+```
+
+これローカル環境でfronendからbarckendへのapiを叩いてtodoリスト一覧を表示させることができました。
+
+### Docker化
+
+次はこれをDocker化していきます。
+frontend, backendそれぞれにDockerfileを作成してbackendコンテナ、frontendコンテナを作成します。
+
+docker-composeで立ち上げられるところまでを考えていきます。
+
+#### backendのDocker化
