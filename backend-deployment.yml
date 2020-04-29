@@ -1,0 +1,75 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: gcr.io/gke-django-tutorial/backend:latest
+        imagePullPolicy: Always
+        command: ["gunicorn", "-b", ":8000", "config.wsgi"]
+        env:
+          - name: DATABASE_USER
+            valueFrom:
+              secretKeyRef:
+                name: cloudsql
+                key: username
+          - name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cloudsql
+                key: password
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-key
+                key: SECRET_KEY
+        ports:
+        - containerPort: 8000
+        livenessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 6
+
+      - image: gcr.io/cloudsql-docker/gce-proxy:1.16
+        name: cloudsql-proxy
+        command:
+          [
+            "/cloud_sql_proxy",
+            "--dir=/cloudsql",
+            "-instances=gke-django-tutorial:asia-northeast1:websql=tcp:5432",
+            "-credential_file=/secrets/cloudsql/credentials.json",
+          ]
+        volumeMounts:
+          - name: cloudsql-oauth-credentials
+            mountPath: /secrets/cloudsql
+            readOnly: true
+          - name: ssl-certs
+            mountPath: /etc/ssl/certs
+          - name: cloudsql
+            mountPath: /cloudsql
+      volumes:
+        - name: cloudsql-oauth-credentials
+          secret:
+            secretName: cloudsql-oauth-credentials
+        - name: ssl-certs
+          hostPath:
+            path: /etc/ssl/certs
+        - name: cloudsql
+          emptyDir:

@@ -973,5 +973,565 @@ $\gke-django-tutorial\docker-compose up --build
 ビルドに時間がかかりますが、問題なく起動することができました。
 `http://localhost:3000`にアクセスすると元の画面が確認できます。
 
-## GKEへデプロイ
+## デプロイ
 
+こんな構造でクラスタを形成していきます。
+
+<!-- クラスタの図 -->
+
+### プロジェクトを作成
+
+コンソールから新しいプロジェクトを開始します。
+
+プロジェクト名: gke-django-tutorial
+場所: 組織なし
+
+### 課金が有効かどうかを確認する
+
+参考 : https://cloud.google.com/billing/docs/how-to/modify-project?authuser=2
+
+### Cloud SDKをインストールして初期化
+
+```sh
+$\gke-django-tutorial\gcloud init
+
+Welcome! This command will take you through the configuration of gcloud.
+
+Pick configuration to use:
+ [1] Re-initialize this configuration [xxxxxx] with new settings
+ [2] Create a new configuration
+
+Please enter your numeric choice:  2
+
+Enter configuration name. Names start with a lower case letter and
+contain only lower case letters a-z, digits 0-9, and hyphens '-':  gke-django-tutorial
+Your current configuration has been set to: [gke-django-tutorial]
+
+You can skip diagnostics next time by using the following flag:
+  gcloud init --skip-diagnostics
+
+Network diagnostic detects and fixes local network connection issues.
+Checking network connection...done.
+Reachability Check passed.
+Network diagnostic passed (1/1 checks passed).
+
+Choose the account you would like to use to perform operations for
+this configuration:
+ [1] XXXX@gmail.com
+ [2] XXXX@gmail.com
+ [3] Log in with a new account
+Please enter your numeric choice:  1
+
+You are logged in as: [komedapeople@gmail.com].
+
+Pick cloud project to use:
+ [1] XXXXXXX
+ [2] gke-django-tutorial
+ [3] Create a new project
+Please enter numeric choice or text value (must exactly match list
+item):  2
+
+Your current project has been set to: [gke-django-tutorial].
+
+Not setting default zone/region (this feature makes it easier to use
+[gcloud compute] by setting an appropriate default value for the
+--zone and --region flag).
+See https://cloud.google.com/compute/docs/gcloud-compute section on how to set
+default compute region and zone manually. If you would like [gcloud init] to be
+able to do this for you the next time you run it, make sure the
+Compute Engine API is enabled for your project on the
+https://console.developers.google.com/apis page.
+
+Your Google Cloud SDK is configured and ready to use!
+
+* Commands that require authentication will use komedapeople@gmail.com by default
+* Commands will reference project `gke-django-tutorial` by default
+Run `gcloud help config` to learn how to change individual settings
+
+This gcloud configuration is called [gke-django-tutorial]. You can create additional configurations if you work with multiple accounts and/or projects.
+Run `gcloud topic configurations` to learn more.
+
+Some things to try next:
+
+* Run `gcloud --help` to see the Cloud Platform services you can interact with. And run `gcloud help COMMAND` to get help on any gcloud command.
+* Run `gcloud topic --help` to learn about advanced features of the SDK like arg files and output formatting
+
+
+Updates are available for some Cloud SDK components.  To install them,
+please run:
+  $ gcloud components update
+
+
+
+To take a quick anonymous survey, run:
+  $ gcloud survey
+
+```
+
+### 必要なAPIを有効にする
+
+Datastore, Pub/Sub, Cloud Storage JSON, Cloud Logging, and Google+APIs を有効にします。
+
+### CloudSQLの準備
+
+#### Cloud SQL Adminを有効にする
+
+```sh
+$\gke-django-tutorial\gcloud services enable sqladmin
+Operation "operations/acf.652ef02f-5bbe-433c-94e5-1b11fcc0def9" finished successfully.
+```
+
+#### CloudSQL proxy
+
+Cloud SQL Proxyをダウンロードして`cloud_sql_proxy.exe`に名前を変更します。
+参考: https://cloud.google.com/python/django/kubernetes-engine#installingthecloudsqlproxy
+
+#### インスタンスの作成
+
+CloudSQLインスタンスを作成します。
+
+```sh
+データベースエンジンの選択: PostgreSQL
+インスタンスID: websql
+パスワード: gke_django_tutorial
+ロケーション:
+    リージョン: asia-northeast1
+    ゾーン: asia-notrheast1-a
+データベースのバージョン: PostgreSQL 11
+```
+
+#### インスタンスの初期化
+
+先ほどダウンロードした`cloud_sql_proxy.exe`を使ってCloudSQLに接続するための`connectionName`を確認します。
+
+```sh
+# connecsionNameの確認
+$\gke-django-tutorial\gcoud sql instances describe websql
+connectionName: gke-django-tutorial:asia-northeast1:websql
+
+# インスタンスの接続
+$\gke-django-tutorial\gcoud_sql_proxy.exe -instances="gke-django-tutorial:asia-northeast1:websql"=tcp:5432
+2020/04/28 17:49:51 Listening on 127.0.0.1:5432 for gke-django-tutorial:asia-northeast1:websql
+2020/04/28 17:49:51 Ready for new connections
+```
+
+このコマンドによってlocal環境からCloudSQLインスタンスに接続することができました。
+
+#### データベースの作成
+
+コンソールからデータベースを作成しましょう。コンソール上の`websql`を選択して`データベース`から`データベースを作成`することができます。
+
+```sh
+データベース名: web-db
+```
+
+#### データベースユーザーの作成
+
+データベースのユーザーアカウントを作成しておきます。
+```sh
+ユーザー名: master
+パスワード: websql-pass
+```
+
+#### CloudSQLのサービスアカウントの作成
+
+CloudSQlのサービスアカウントを作成して、json形式のプライベートキーをダウンロードしましょう。
+
+```sh
+サービスアカウント名: gke-django-tutorial-service-account
+サービスアカウントID: gke-django-tutorial-service@gke-django-tutorial.iam.gservice
+権限: Cloud SQL 管理者
+⇒キーの作成でjson形式を選択
+```
+
+プライベートキーはプロジェクト直下に`secrets`というディレクトリを作成して設置しました。
+
+```sh
+$\gke-django-tutorial\mkdir secrets
+```
+
+#### 環境変数の設定
+
+LocalのDjangoのデータベースをCloudSQLに設定して起動していきたいと思います。
+`DATABASE_USER`と`DATABASE_PASSWORD`を環境変数として利用するため、`.env`ファイルに追加します。
+
+```sh
+SECRET_KEY='nz8t((i_mali=%0+z_g+uc**9dgky8)74slvs&6h$=9b^8t7$@'
+DEBUG=False
+DATABASE_USER=master
+DATABASE_PASSWORD=websql-pass
+```
+
+#### Pythonパッケージの追加
+
+DjangoからPostgresを使用するにはパッケージを追加する必要があります。
+デプロイに必要なパッケージを追加しておきます。
+
+```sh
+# パッケージのインストール
+(venv)$\gke-django-tutorial\backend\python -m pip install wheel gunicorn psycopg2-binary
+
+# requirements.txtの更新
+(venv)$\gke-django-tutorial\backend\python -m pip freeze > requirements.txt
+```
+
+#### backend/config/settings.py
+
+DjangoのDATABASE設定をdb.sqlite3からCloudSQLに変更します。
+`.env`ファイルを直接参照する必要があるため、`python-dotenv`を使って読み込みます。
+
+```python
+# backend/config/setting.sy
+
+import os
+from dotenv import load_dotenv  # 追加
+
+# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_DIR = os.path.basename(BASE_DIR)
+
+load_dotenv(os.path.join(BASE_DIR, '.env'))  # 追加
+
+# Quick-start development settings - unsuitable for production
+# See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('SECRET_KEY')  # 変更
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = os.environ.get('DEBUG')  # 変更
+
+DATABASES = {
+    'default': {
+        # If you are using Cloud SQL for MySQL rather than PostgreSQL, set
+        # 'ENGINE': 'django.db.backends.mysql' instead of the following.
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'web-db',
+        'USER': os.getenv('DATABASE_USER'),
+        'PASSWORD': os.getenv('DATABASE_PASSWORD'),
+        'HOST': '127.0.0.1',
+        'PORT': '5432',
+    }
+}
+```
+
+#### マイグレーション
+
+データベースがCloudSQLに変更したのでマイグレーションし直す必要があります。
+
+```sh
+(venv)$\gke-django-tutorial\backend\python manage.py migrate
+Operations to perform:
+  Apply all migrations: admin, auth, contenttypes, sessions, todo
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying sessions.0001_initial... OK
+  Applying todo.0001_initial... OK
+```
+
+問題なくCloudSQLにマイグレーションすることができました。
+
+#### 管理ユーザーの追加
+
+同様に管理ユーザーを作成します。
+
+```sh
+(venv)$\gke-django-tutorial\backend\python manage.py createsuperuser
+ユーザー名 (leave blank to use 'masayoshi'): masayoshi
+メールアドレス: komedapeople@gmail.com
+Password:
+Password (again):
+Superuser created successfully.
+```
+
+開発用サーバーを立ち上げてadminページからデータを3つほど追加しておきましょう。
+
+```sh
+(venv)$\gke-django-tutorial\backend\python manage.py runserver
+```
+
+### Cloud Storageの準備
+
+静的ファイルをGoogle Clodu Storageに格納するための設定を行います。
+ストレージを作成して静的ファイルをアップロードします。これをしないとadmin画面などのcssが反映されません。
+
+```sh
+# ストレージの作成
+(venv)$\gke-django-tutorial\backend\gsutil mb gs://gke-django-storage
+Creating gs://gke-django-storage/...
+
+# 公開設定
+(venv)$\gke-django-tutorial\backend\gsutil defacl set public-read gs://gke-django-storage
+Setting default object ACL on gs://gke-django-storage/...
+/ [1 objects]
+
+# 静的ファイルを集める
+(venv)$\gke-django-tutorial\backend\python manage.py collectstatic
+
+# Cloud Storageに静的ファイルをアップロードする
+(venv)$\gke-django-tutorial\backend\gsutil rsync -R staticfiles/ gs://gke-django-storage/static
+
+```
+
+`backend/config/settings.py`の`STATIC_URL`をGCSを参照するように変更します。
+
+```python
+# backend/config/settings.py
+STATIC_URL = 'https://storage.googleapis.com/gke-django-storage/static/'
+```
+
+### GKEへデプロイ
+
+クラスターを作成してコンテナをデプロイします。ServiceとIngressを設定することで外部からアクセスすることが可能になります。
+
+#### クラスター作成
+
+コンソールからクラスタを作成します。
+
+```sh
+クラスター名: gke-django-tutorial
+ロケーションタイプ:ゾーン:asia-notrheast1-a
+マスターのバージョン: 1.14.10-gke.27(デフォルト)
+```
+
+#### contextsの入手
+
+作成したクラスターをローカルのkubectlから利用するためにcontextsを入手する。
+
+```sh
+$\gke-django-tutorial\gcloud container clusters get-credentials gke-django-tutorial --zone="asia-northeast1-a"
+Fetching cluster endpoint and auth data.
+kubeconfig entry generated for gke-django-tutorial.
+
+# コンテキストが適用されているかどうかを確認する。
+$\gke-django-tutorial\kubectl config current-context
+gke_gke-django-tutorial_asia-northeast1-a_gke-django-tutorial
+```
+
+#### CloudSQLの設定
+
+Secretsを作成してCloudSQLのユーザー名、パスワードを環境変数として安全に使用することができます。
+GKE から Cloud SQL のインスタンスを使用するにあたって、インスタンスレベルアクセスとデータベースアクセスに関するsecrets を作成する必要があります。
+
+参考: [インスタンスのアクセス制御]:(https://cloud.google.com/sql/docs/mysql/instance-access-control)
+
+インスタンスレベルのアクセスについて secret を作成する。
+
+```sh
+$\gke-django-tutorial\kubectl create secret generic cloudsql-oauth-credentials --from-file=credentials.json=".\secrets\cloudsql\gke-django-tutorial-c9c425adccbd.json"
+
+secret/cloudsql-oauth-credentials created
+```
+
+データベースへアクセスに関する secret を作成する。
+
+```sh
+$\gke-django-tutorial\kubectl create secret generic cloudsql --from-literal=username="master" --from-literal=password="master-pass"
+```
+
+#### 環境変数の設定
+
+.envファイルに記述されている残りの`SECRET_KEY`をsecretに追加しましょう。
+`DEBUG`はFalseとしておきます。
+
+```sh
+$\gke-django-tutorial\kubectl create secret generic secret-key --from-literal=SECRET_KEY="nz8t((i_mali=%0+z_g+uc**9dgky8)74slvs&6h$=9b^8t7$@"
+```
+
+`backend/config/settings.py`で関係のある個所は以下のような状態になります。
+
+```python
+# backend/config/settings.py
+
+import os
+
+# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_DIR = os.path.basename(BASE_DIR)
+
+# Quick-start development settings - unsuitable for production
+# See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('SECRET_KEY')  # 変更
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = False
+
+DATABASES = {
+    'default': {
+        # If you are using Cloud SQL for MySQL rather than PostgreSQL, set
+        # 'ENGINE': 'django.db.backends.mysql' instead of the following.
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'web-db',
+        'USER': os.environ.get('DATABASE_USER'),
+        'PASSWORD': os.environ.get('DATABASE_PASSWORD'),
+        'HOST': '127.0.0.1',
+        'PORT': '5432',
+    }
+}
+
+```
+
+#### コンテナイメージの用意
+
+ローカルでイメージをビルドしてGoogle Cloud Registryにアップロードします。
+イメージ名は`gcr.io/${PROJECT}/${IMAGENAME}:${TAGNAME}`形式にする必要があります。
+
+```sh
+# プロジェクト名の確認
+$\gke-django-tutorial\gcloud config get-value project
+Your active configuration is: [gke-django-tutorial]
+gke-django-tutorial
+
+# イメージのビルド
+# backend
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/backend:latest ./backend
+
+# frontend
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/frontend:latest ./frontend
+
+# イメージをGCRにアップロードする
+# backend
+$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/backend:latest
+WARNING: `gcloud docker` will not be supported for Docker client versions above 18.03.
+
+As an alternative, use `gcloud auth configure-docker` to configure `docker` to
+use `gcloud` as a credential helper, then use `docker` as you would for non-GCR
+registries, e.g. `docker pull gcr.io/project-id/my-image`. Add
+`--verbosity=error` to silence this warning: `gcloud docker
+--verbosity=error -- pull gcr.io/project-id/my-image`.
+
+See: https://cloud.google.com/container-registry/docs/support/deprecation-notices#gcloud-docker
+
+The push refers to repository [gcr.io/gke-django-tutorial/backend]
+12ed78fdfd14: Pushed
+485427ae6881: Pushed
+bb530f6bab17: Pushed
+4eae8da6dc9e: Pushed
+a91544cdf6ea: Pushed
+956d28316107: Layer already exists
+86120ec29f78: Layer already exists
+5d34cecc2826: Layer already exists
+baf481fca4b7: Layer already exists
+3d3e92e98337: Layer already exists
+8967306e673e: Layer already exists
+9794a3b3ed45: Layer already exists
+5f77a51ade6a: Layer already exists
+e40d297cf5f8: Layer already exists
+latest: digest: sha256:3905957cfddea8454288b460adf8b134d0de1bc0791dbc8cf3fe7b9e6012512f size: 3267
+
+# frontend
+$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/frontend:latest
+WARNING: `gcloud docker` will not be supported for Docker client versions above 18.03.
+
+As an alternative, use `gcloud auth configure-docker` to configure `docker` to
+use `gcloud` as a credential helper, then use `docker` as you would for non-GCR
+registries, e.g. `docker pull gcr.io/project-id/my-image`. Add
+`--verbosity=error` to silence this warning: `gcloud docker
+--verbosity=error -- pull gcr.io/project-id/my-image`.
+
+See: https://cloud.google.com/container-registry/docs/support/deprecation-notices#gcloud-docker
+
+The push refers to repository [gcr.io/gke-django-tutorial/frontend]
+c6c151685fbb: Pushed
+ef3845fc4e9d: Pushed
+069d14dab7a7: Pushed
+a3a63dfb31f4: Pushed
+2fcc481d7fdd: Pushed
+203542cdccd7: Pushed
+37d4010f40f0: Pushed
+f895d244bc8e: Pushed
+03dc1830d2d5: Pushed
+1d7382716a27: Pushed
+01727b1a72df: Layer already exists
+69dfa7bd7a92: Layer already exists
+4d1ab3827f6b: Layer already exists
+7948c3e5790c: Layer already exists
+latest: digest: sha256:26d0836290483f2f58141db9bd18a66a5c5b99a3ce9da3643679592d0d8bb5ec size: 3261
+
+```
+
+#### Frontendのデプロイ
+
+FrontendのDeploymentを作成してデプロイします。deploymentとして`frontend-react.yml`というファイルを作成します。
+
+```sh
+$\gke-django-tutorial\type nul > frontend-deployment.yml
+```
+
+```yml
+# frontend-deployment.yml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: gcr.io/gke-django-tutorial/frontend:latest
+          imagePullPolicy: Always
+          command: ["npm", "start"]
+          ports:
+          - containerPort: 3000
+
+```
+
+```sh
+$\gke-django-tutorial\kubectl create -f frontend-deployment.yml
+deployment.extensions/frontend created
+
+# 確認
+$\gke-django-tutorial\kubectl get pods
+NAME                        READY   STATUS              RESTARTS   AGE
+frontend-77f75d4c47-45j4q   0/1     ContainerCreating   0          27s
+```
+
+```sh
+$ kubectl logs ~~
+
+> frontend@0.1.0 start /code
+> react-scripts start
+
+[34mℹ[39m [90m｢wds｣[39m: Project is running at http://10.24.0.8/
+[34mℹ[39m [90m｢wds｣[39m: webpack output is served from
+[34mℹ[39m [90m｢wds｣[39m: Content not from webpack is served from /code/public
+[34mℹ[39m [90m｢wds｣[39m: 404s will fallback to /
+Starting the development server...
+```
+
+#### Backendのデプロイ
+
+frontendと同じようにbackendのDeploymentを作成してデプロイします。
+`backend-deployment.yml`を作成します。
+
+```sh
+$\gke-django-tutorial\type nul > backend-deployment.yml
+```
+
+
+
+#### 
