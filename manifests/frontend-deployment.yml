@@ -1,0 +1,25 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: web-front
+          image: gcr.io/gke-django-tutorial/web-front:latest
+          imagePullPolicy: Always
+          command: ["npm", "start"]
+          ports:
+            - containerPort: 3000
+        - name: nginx-front
+          image: gcr.io/gke-django-tutorial/nginx-front:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80

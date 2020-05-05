@@ -1,0 +1,4 @@
+venv
+.env
+Dockerfile
+config/local_settings.py

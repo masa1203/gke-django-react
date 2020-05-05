@@ -1,0 +1,30 @@
+version: "3.7"
+
+services:
+  web-front:
+    build: ./web-front/.
+    volumes:
+      - ./web-front:/code
+      - /code/node_modules
+    stdin_open: true
+    tty: true
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - NODE_ENV=development
+    command: yarn start
+    networks:
+      - frontend_network
+
+  server:
+    container_name: nginx_front
+    build: ./nginx/.
+    ports:
+      - "80:80"
+    depends_on:
+      - web-front
+    networks:
+      - frontend_network
+
+networks:
+  frontend_network:
+    driver: bridge

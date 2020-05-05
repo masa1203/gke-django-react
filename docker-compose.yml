@@ -5,14 +5,13 @@ services:
   backend:
     env_file: ./backend/.env
     build: ./backend/.
-    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
     volumes:
       - ./backend:/code
     ports:
       - "8000:8000"
     stdin_open: true
     tty: true
-    command: python /code/manage.py runserver 0.0.0.0:8000
+    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
     environment:
       - CHOKIDAR_USEPOLLING=true
   frontend:
