@@ -1,4 +1,4 @@
-venv
-.env
+venv/
+.env/
 Dockerfile
-config/local_settings.py
+# config/local_settings.py

@@ -2,8 +2,8 @@ version: "3.7"
 
 services:
   web-back:
-    env_file: ./web-back/.env
     container_name: python-backend
+    env_file: ./web-back/.env
     build: ./web-back/.
     volumes:
       - ./web-back:/code/
@@ -11,27 +11,27 @@ services:
       - media_volume:/code/media # <-- bind the media volume
     stdin_open: true
     tty: true
-    # command: ["gunicorn", "--bind", ":8000", "config.wsgi:application"]
-    command: python /code/manage.py runserver 0.0.0.0:8000 --settings config.local_settings
+    command: gunicorn --bind :8000 config.wsgi:application
+    # command: python /code/manage.py runserver 0.0.0.0:8000 --settings config.local_settings
     networks:
       - backend_network
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - DJANGO_SETTINGS_MODULE=config.local_settings
   server:
     container_name: nginx
     build:
       context: ./nginx/.
       dockerfile: Dockerfile.dev
     volumes:
-      - static_volume:/staticfiles # <-- bind the static volume
-      - media_volume:/media # <-- bind the media volume
+      - static_volume:/code/staticfiles # <-- bind the static volume
+      - media_volume:/code/media # <-- bind the media volume
     ports:
       - "8080:80"
     depends_on:
       - web-back
     networks:
       - backend_network
-
 networks:
   backend_network:
     driver: bridge

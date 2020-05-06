@@ -2,6 +2,7 @@ version: "3.7"
 
 services:
   web-front:
+    container_name: react-frontend
     build: ./web-front/.
     volumes:
       - ./web-front:/code
@@ -17,7 +18,9 @@ services:
 
   server:
     container_name: nginx_front
-    build: ./nginx/.
+    build:
+      context: ./nginx/.
+      dockerfile: Dockerfile.dev
     ports:
       - "80:80"
     depends_on:

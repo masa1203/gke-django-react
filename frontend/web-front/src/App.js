@@ -14,6 +14,7 @@ class App extends Component {
   getTodos() {
     axios
       .get("https://sawakome.page/api/")
+      // .get("http://localhost:8080/api/")
       .then((res) => {
         this.setState({ todo: res.data });
       })

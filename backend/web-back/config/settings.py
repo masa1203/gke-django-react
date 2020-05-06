@@ -157,6 +157,3 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')] # 追加
 
 # 本番環境で静的ファイルを参照する先
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles') # 追加
-
-# メディアファイルpath
-MEDIA_URL = '/media/' # 追加

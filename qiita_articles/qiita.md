@@ -1,5 +1,8 @@
 # ゼロからGKEにDjango+Reactをデプロイする
 
+- ローカル(Nginx-Django)
+- 
+
 ## やりたいこと
 
 Djagno+Reactの構成でアプリケーションを開発してGoogle Kubernetes Engineにデプロイしたいけれども
@@ -14,7 +17,7 @@ Djagno+Reactの構成でアプリケーションを開発してGoogle Kubernetes
 
 ## 目指す姿
 
-[構成の絵]
+![img](C:\Users\masayoshi\docker_project\gke-django-tutorial_v2\qiita_articles\architecture.png)
 
 ## 環境
 
@@ -42,37 +45,66 @@ OS windows10 pro
 # プロジェクトフォルダの作成
 $ mkdir gke-django-tutorial
 $ cd gke-django-tutorial
+
 # ディレクトリを作成する
 $\gke-django-tutorial\mkdir backend
 $\gke-django-tutorial\mkdir frontend
 ```
 
-### Backend の開発を始める
+### backendの開発(Djagno編)
 
-backendはDjango-rest-frameworkでRestAPIを作成します。
-まずはbackendから環境を作成してみます。
+backendのPodはDjango-rest-frameworkでRestAPIを配信します。
+backendのPod内について整理しておきます。
+
+役割 | コンテナイメージ
+--- | ---
+プロキシサーバー | Nginx:1.17.4-alpine
+アプリケーション | Python3.7 - Django rest framework
+cloud_sql_proxy | gcr.io/cloudsql-docker/gce-proxy
+
+backend内のディレクトリを作成します。
 
 ```sh
 # backendディレクトリに移動
 $\gke-django-tutorial\cd backend
-# Pythonの仮想環境作成
-$\gke-django-tutorial\backend\python -m venv venv
-# 仮想環境の有効化
-$\gke-django-tutorial\backend\vnev\Scripts\activate
-# Pythonパッケージのインストール
-(venv)$\gke-django-tutorial\backend\python -m install --upgrade pip setuptools
-(venv)$\gke-django-tutorial\backend\python -m install django djangorestframework python-dotenv
-# Djangoのプロジェクトを始める
-(venv)$\gke-django-tutorial\backend\django-admin startproject config .
+
+# djangoディレクトリの作成
+$\gke-django-tutorial\mkdir web-back
+
+# Nginxディレクトリの作成
+$\gke-django-tutorial\mkdir nginx
 ```
 
-backendディレクトリ下で`django-admin startprject config .`とすることで
+#### Djangoでプロジェクトを始める
+
+Pythonの仮想環境を作成してDjangoでAPIサーバーを開発していきます。
+これは`backend\web-back\`ディレクトリ内に作成します。
+
+```sh
+# web-backディレクトリ
+$\gke-django-tutorial\cd web-back
+
+# Pythonの仮想環境作成
+$\gke-django-tutorial\backend\web-back\python -m venv venv
+
+# 仮想環境の有効化
+$\gke-django-tutorial\backend\web-back\venv\Scripts\activate
+
+# Pythonパッケージのインストール
+(venv)$\gke-django-tutorial\backend\web-back\python -m install --upgrade pip setuptools
+(venv)$\gke-django-tutorial\backend\web-back\python -m install django djangorestframework python-dotenv
+
+# Djangoのプロジェクトを始める
+(venv)$\gke-django-tutorial\backend\web-back\django-admin startproject config .
+```
+
+web-backディレクトリ下で`django-admin startprject config .`とすることで
 `config`というDjangoプロジェクトフォルダが作成されました。
 
 ローカルサーバーが起動するかどうか確認しましょう。
 
 ```sh
-(venv)$\gke-django-tutorial\backend\python manage.py runserver
+(venv)$\gke-django-tutorial\backend\web-back\python manage.py runserver
 Watching for file changes with StatReloader
 Performing system checks...
 
@@ -91,15 +123,15 @@ Quit the server with CTRL-BREAK.
 #### settings.py
 
 `config/settings.py`を編集して基本的な設定を盛り込みます。
-settings.py の秘匿すべき情報は`.env`ファイルに記述して公開しないようにします。
-python-dotenv を使って`.env`に記載された情報を利用するように変更しましょう。
+`settings.py`の秘匿すべき情報は`.env`ファイルに記述して公開しないようにします。
+python-dotenvパッケージを使って`.env`に記載された情報を利用するように変更しましょう。
 
 ```sh
 # .envファイルの作成
 (venv)$\gke-django-tutorial\backend\type nul > .env
 ```
 
-```python:config.settins.py
+```python
 # config/settings.py
 
 import os
@@ -215,7 +247,6 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
-
 # 開発環境下で静的ファイルを参照する先
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')] # 追加
 
@@ -270,7 +301,6 @@ REST_FRAMEWORK = {
 
 ```
 `rest_framework.permissions.AllowAny`はdjango-rest-frameworkが暗黙的に決めているデフォルトの設定`'DEFAULT_PERMISSION_CLASSES'`を解除するためのものです。
-この設定はまだよくわかってないのですがとりあえず前に進みます。
 
 #### todo/models.py
 
@@ -338,23 +368,22 @@ Running migrations:
 管理者ユーザーを作成します。
 
 ```sh
-(venv)$\gke-django-tutorial\backend\python manage.py createsuperuser
-ユーザー名 (leave blank to use '[YOUR_NAME]'): admin
+(venv)$\gke-django-tutorial\backend\web-back\python manage.py createsuperuser
+ユーザー名 (leave blank to use '[YOUR_NAME]'): [USER_NAME]
 メールアドレス: YOUR_MAIL_ADDRESS@MAIL.COM
 Password:
 Password (again):
 Superuser created successfully.
 ```
 
-開発用サーバーを起動して`http://localhost:8000/admin`にアクセスするとDjango管理サイトログイン画面が表示されます。
-先ほど設定したユーザー名、パスワードを入力してログインしてみましょう。
+開発用サーバーを起動して`http://localhost:8000/admin/`にアクセスするとDjango管理サイトログイン画面が表示されます。設定したユーザー名、パスワードを入力してログインしてみましょう。
 
-作成したアプリケーション`Todo`のテーブルを確認することができます。
+ログインできると作成したアプリケーション`Todo`のテーブルを確認することができます。
 2，3個アイテムを追加しておきましょう。
 
 #### URLs
 
-`config/urls.py`にtodoへのルーティングを追加します。
+`config/urls.py`にtodoアプリケーソンへのルーティングを追加します。
 
 ```python
 # config/urls.py
@@ -371,10 +400,10 @@ urlpatterns = [
 
 #### todo/urls.py
 
-`todos/urls.py`を作成します。
+`todo/urls.py`を作成します。
 
 ```sh
-(venv)$\gke-django-tutorial\backend\type nul > todo\urls.py
+(venv)$\gke-django-tutorial\backend\web-back\type nul > todo\urls.py
 ```
 
 ```python
@@ -409,12 +438,11 @@ class TodoSerializer(serizers.ModelSerializer):
 
 ```
 
-`fields = ('id', 'title', 'text')`での`id`はmodelにて`PrimaryKey`を指定しない場合、
-Django によって自動的に追加されます。
+`fields = ('id', 'title', 'text')`での`id`はmodelにて`PrimaryKey`を指定しない場合、Django によって自動的に追加されます。
 
 #### todo/views.py
 
-Django Rest Frameworkで`views.py`を作成する場合は`rest_framework.generics`の`~~APIView`を継承します。
+Django rest frameworkで`views.py`を作成する場合は`rest_framework.generics`の`~~APIView`を継承します。
 
 ```python
 # todo/views.py
@@ -435,7 +463,7 @@ class DetailTodo(generics.RetrieveAPIView):
     serializer_class = TodoSerializer
 ```
 
-routerなど設定できていませんが、とりあえずはTodoアイテムをAPIとして使用できるようになりました。
+routerなど設定できていませんが、とりあえずはTodoアプリケーションのアイテムをRest APIとして配信できる準備ができました。
 開発サーバーで`http://127.0.0.1:8000/api/`にアクセスするとAPIviewを確認することができます。
 
 ここまではDjangoでよくあるローカル環境での開発です。
@@ -448,7 +476,7 @@ CORS(Cross-Origin Resource Sharing)の設定を行う必要があります。
 `django-cors-headers`をインストールしましょう。
 
 ```sh
-(venv)$\gke-django-tutorial\backend\python -m pip install django-cors-headers
+(venv)$\gke-django-tutorial\backend\web-back\python -m pip install django-cors-headers
 ```
 
 `config/settings.py`を更新します。
@@ -578,20 +606,34 @@ Destroying test database for alias 'default'...
 #### 静的ファイル
 
 デプロイ後に管理者機能のcssが反映されるように静的ファイルを集約しておきます。
+配信用の静的ファイルを集約するディレクトリは`staticfiles/`とし、開発用に追加する静的ファイルディレクトリは`static/`としています。
 
 ```sh
-# 静的ファイル用ディレクトリ
-(venv)$\gke-django-tutorial\backend\mkdir static
+# 静的ファイル配信用ディレクトリ
+(venv)$\gke-django-tutorial\backend\web-back\mkdir staticfiles
+
+# 静的ファイル開発用ディレクトリ
+(venv)$\gke-django-tutorial\backend\web-back\mkdir static
+
 # 静的ファイルの集約
-(venv)$\gke-django-tutorial\backend\python manage.py collectstatic
+(venv)$\gke-django-tutorial\backend\web-back\python manage.py collectstatic
 ```
 
-#### requirements.txt
+`staticfiles/`ディレクトリ下にadminのCSSなども追加されるのが確認できます。
 
-仮想環境にインストールしたPythonパッケージをrequirements.txtにまとめておきます。
+#### Pythonパッケージの追加
+
+GKEにデプロイする際にはCloud SQLのPostgresを利用します。
+DjangoからPostgresを使用するにはpsycopig2が必要です。
+また、アプリケーションの起動にはgunicornを使用します。
+
+必要なパッケージを追加でインストールし、仮想環境にインストールしたPythonパッケージをrequirements.txtにまとめておきます。
 
 ```sh
-# 静的ファイル用ディレクトリ
+# パッケージのインストール
+(venv)$\gke-django-tutorial\backend\python -m pip install wheel gunicorn psycopg2-binary
+
+# requirements.txtの更新
 (venv)$\gke-django-tutorial\backend\python -m pip freeze > requirements.txt
 ```
 
@@ -602,26 +644,217 @@ asgiref==3.2.7
 Django==3.0.5
 django-cors-headers==3.2.1
 djangorestframework==3.11.0
+gunicorn==20.0.4
+psycopg2-binary==2.8.5
 python-dotenv==0.13.0
 pytz==2019.3
 sqlparse==0.3.1
 ```
 
-### Frontendの開発を進める
+#### Dockerfileの作成
 
-新しいコマンドプロンプトを開いてReactのプロジェクトを開始していきます。
+Django側のコンテナイメージを作成するためのDockerfileを作成します。
 
 ```sh
-# ディレクトリ下にReactプロジェクトをたてる
-$\gke-django-tutorial\frontend\npx create-react-app .
+# Dockerfileの作成
+(venv)$\gke-django-tutorial\backend\web-back\type nul > Dockerfile
 
-# Reactの開発用サーバーを立ち上げる
+# .dockerignoreの作成
+(venv)$\gke-django-tutorial\backend\web-back\type nul > .dockerignore
+```
+
+```Dockerfile
+# backend/web-back/Dockerfile
+
+# set base image
+FROM python:3.7
+
+# set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# set work directory
+WORKDIR /code
+
+# install dependencies
+COPY requirements.txt ./
+RUN python3 -m pip install --upgrade pip setuptools
+RUN pip install -r requirements.txt
+
+# Copy project
+COPY . ./
+
+# Expose application port
+EXPOSE 8000
+```
+
+.dockerignoreも作成してコンテナ内に入れたくないファイルを分けておきます。
+
+```.dockerignore
+venv/
+.env
+Dockerfile
+config/local_settings.py
+```
+
+これでDjangoに関するDockerイメージを作成する準備ができました。
+
+### backendの開発(Nginx編)
+
+backend-Pod内のリバースプロキシサーバーとしてNginxコンテナを配置します。
+Nginxは`/etc/nginx/conf.d/`内の設定ファイルを使ってリバースプロキシの機能を定義していきます。
+
+また、backendの開発編の最後にはdocker-composeで起動させてみたいと思うので、docker-compose用のファイルも作成しておきます。
+
+```sh
+# Nginx用のファイル作成
+$\gke-django-tutorial\backened\nginx\type nul > Dockerfile
+$\gke-django-tutorial\backened\nginx\type nul > Dockerfile.dev
+$\gke-django-tutorial\backened\nginx\type nul > default.conf
+$\gke-django-tutorial\backened\nginx\type nul > default.dev.conf
+```
+
+`default.conf`は`Nginxコンテナ:80` ⇒ `Django:8000`となるようにリバースプロキシを設定しました。
+
+`location = /healthz`ディレクティブはGKEにデプロイ後に必要になるヘルスチェック用のパスです。
+`Nginx
+`location /static/`ディレクティブは静的ファイルを配信するためのパスです。これが無いと管理者画面のCSSが適用されません。GKEにデプロイ時には静的ファイルはCloud Storageから配信するようにするので、削除します。
+
+`server`ディレクティブはGKEにデプロイする場合は`localhost:8000`とし、docker-composeで起動する場合は`web-back:8000`としています。
+これはdocker-composeで起動する場合はサービス名で名前解決をする必要があるためです。GKEにデプロイする場合は同じPod内にあるため、`localhost:8000`で名前解決可能です。
+
+
+```conf
+; default.dev.conf
+upstream django {
+    server web-back:8000;
+}
+
+; default.confの場合
+; upstream django {
+    ; server localhost:8000;
+; }
+
+server {
+
+    listen 80;
+
+    location = /healthz {
+        return 200;
+    }
+
+    location / {
+        proxy_pass http://django;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_redirect off;
+    }
+
+; GKEデプロイ時には削除
+    location /static/ {
+        alias /code/staticfiles/;
+    }
+}
+
+```
+
+DockerfileはNginxの設定ファイルをNginxコンテナにコピーさせることで設定を反映させます。
+
+```Dockerfile
+# backend\nginx\Dockerfile.dev
+FROM nginx:1.17.4-alpine
+
+RUN rm /etc/nginx/conf.d/default.conf
+COPY default.dev.conf /etc/nginx/conf.d
+
+# backend\nginx\Dockerfile.devの場合
+# COPY default.conf /etc/nginx/conf.d
+
+```
+
+### backendの開発(docker-compose編)
+
+docker-composeを使ってNginx+Djangoの構成でコンテナを起動させたいと思います。
+
+```sh
+# docker-compose.ymlの作成
+$\gke-django-tutorial\backend\type nul > docker-compose.yml
+```
+
+```yml
+version: "3.7"
+
+services:
+  web-back:
+    container_name: python-backend
+    env_file: ./web-back/.env
+    build: ./web-back/.
+    volumes:
+      - ./web-back:/code/
+      - static_volume:/code/staticfiles # <-- bind the static volume
+    stdin_open: true
+    tty: true
+    command: gunicorn --bind :8000 config.wsgi:application
+    networks:
+      - backend_network
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - DJANGO_SETTINGS_MODULE=config.local_settings
+  server:
+    container_name: nginx
+    build:
+      context: ./nginx/.
+      dockerfile: Dockerfile.dev
+    volumes:
+      - static_volume:/code/staticfiles # <-- bind the static volume
+    ports:
+      - "8080:80"
+    depends_on:
+      - web-back
+    networks:
+      - backend_network
+networks:
+  backend_network:
+    driver: bridge
+volumes:
+  static_volume:
+```
+
+`http://localhost:8080` ⇒ `Nginxコンテナ:80` ⇒ `Django:8000`となるように
+ポートフォワーディングされています。
+
+`http://localhost:8080/admin/`にアクセスしてCSSが反映されているかどうかを確認しましょう。
+
+ローカル環境下でdocker-composeで起動して開発できる環境も整いました。
+
+### frontendの開発(React編)
+
+frontendはReactで作成します。Pod内の構成を整理しておきます。
+
+役割 | コンテナイメージ
+--- | ---
+プロキシサーバー | Nginx:1.17.4-alpine
+アプリケーション | node12.14.1-React@16.13.1
+
+新しいコマンドプロンプトを開いてReactのプロジェクトを開始していきます。
+backendと同じようにディレクトリを作成します。
+
+```sh
+# ディレクトリの作成
+$\gke-django-tutorial\frontend\mkdir web-front
+$\gke-django-tutorial\frontend\mkdir nginx
+
+# ディレクトリ下にReactプロジェクトをたてる
+$\gke-django-tutorial\frontend\cd web-front
+$\gke-django-tutorial\frontend\web-front\npx create-react-app .
+
+# Reactの開発用サーバーを立ち上げてみる
 $\gke-django-tutorial\frontend\yarn start
 yarn run v1.22.0
 $ react-scripts start
 i ｢wds｣: Project is running at http://192.168.11.8/
 i ｢wds｣: webpack output is served from
-i ｢wds｣: Content not from webpack is served from C:\Users\masayoshi\docker_project\gke-django-tutorial_v2\frontend\public
+i ｢wds｣: Content not from webpack is served from C:\--your_file_path--\gke-django-tutorial_v2\frontend\public
 i ｢wds｣: 404s will fallback to /
 Starting the development server...
 Compiled successfully!
@@ -641,7 +874,7 @@ APIをリクエストするのには`axios`を使います。
 
 ```sh
 # ライブラリのインストール
-$\gke-django-tutorial\frontend\npm install axios --save
+$\gke-django-tutorial\frontend\web-front\npm install axios --save
 ```
 
 #### App.js
@@ -664,7 +897,7 @@ class App extends Component {
 
   getTodos() {
     axios
-      .get("http://localhost:8000/api/")
+      .get("http://localhost:8080/api/")
       .then(res => {
         this.setState({ todo: res.data });
       })
@@ -693,268 +926,196 @@ export default App;
 fronendからbarckendへのapiを叩いてtodoリスト一覧を表示させることができました。
 これでローカルでの環境構築ができました。
 
-## Docker化
-
-次はこれをDocker化していきます。
-frontend, backendそれぞれにDockerfileを作成してbackendコンテナ、frontendコンテナを作成します。
-開発環境はdocker-composeで構築するように進めていきます。
-
-docker-composeで立ち上げられるところまでを考えていきます。
-
-### backendのDocker化
-
-#### settings.py
-
-backendをdockerコンテナ化する際に環境変数は`.env`で指定することができます。
-これまでは`python-dotenv`で`.env`ファイルを参照していましたが、環境変数を参照するように
-変更しましょう。
-
-まずは`config/local_settings.py`を変更します。
-
-```python
-# config/local_settings.py
-from .settings import *
-
-SECRET_KEY = os.environ.get('SECRET_KEY')  # 追加
-
-DEBUG = True
-
-ALLOWED_HOSTS = ['*']
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
-    }
-}
-```
-
-```python
-# config/settings.py
-import os
-
-# SECRET_KEY = os.environ.get('SECRET_KEY')  # 削除
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY')
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG')
-
-```
-
-GKEデプロイ時にはCloudSQLを使用するのでその時にDATABASE部分は変更します。
-
-#### Dockerfile
-
-Dockerfileを作っていきます。
-
-```sh
-# Dockerfileの作成
-$\gke-django-tutorial\backend\type nul > Dockerfile
-```
-
-```Dockerfile
-# backend/Dockerfile
-
-# set base image
-FROM python:3.7
-
-# set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# set work directory
-RUN mkdir /code
-WORKDIR /code
-
-# install dependencies
-COPY requirements.txt /code/
-RUN python3 -m pip install --upgrade pip setuptools
-RUN pip install -r requirements.txt
-
-# Copy project
-COPY . /code/
-
-EXPOSE 8000
-
-```
-
-#### .dockerignore
-
-このままだと秘匿するべき`.env`ファイルも一緒にコピーされてしまいます。
-`.dockerignore`を追加して`.env`が追加されないようにします。
-
-```sh
-$\gke-django-tutorial\backend\type nul > .dockerignore
-```
-
-```dockerfile
-# .dockerignore
-.env
-```
-
-#### docker-compose.yml
-
-次にプロジェクトディレクトリにdocker-compose.ymlを設置して
-docker-compose upでbackendコンテナを起動できるようにします。
-
-```sh
-# docker-composeの作成
-$\gke-django-tutorial\type nul > docker-compose.yml
-```
-
-```yaml
-# docker-compose.yml
-version: "3.7"
-
-services:
-  backend:
-    env_file: ./backend/.env
-    build: ./backend/.
-    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
-    volumes:
-      - ./backend:/code
-    ports:
-      - "8000:8000"
-    stdin_open: true
-    tty: true
-    command: python /code/manage.py runserver 0.0.0.0:8000
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-```
-
-さっそく起動してみましょう。
-
-```sh
-$\gke-django-tutorial\docker-compose up
-Building backend
-Step 1/10 : FROM python:3.7
- ---> b3b677605817
-
-=省略=
-
-Successfully built 153021f58015
-Successfully tagged gke-django-tutorial_v2_backend:latest
-WARNING: Image for service backend was built because it did not already exist. To rebuild this image you must use `docker-compose build` or `docker-compose up --build`.
-Creating gke-django-tutorial_v2_backend_1 ... done
-Attaching to gke-django-tutorial_v2_backend_1
-backend_1  | Watching for file changes with StatReloader
-backend_1  | Performing system checks...
-backend_1  |
-backend_1  | System check identified no issues (0 silenced).
-backend_1  | April 28, 2020 - 14:07:07
-backend_1  | Django version 3.0.5, using settings 'config.settings'
-backend_1  | Starting development server at http://0.0.0.0:8000/
-backend_1  | Quit the server with CONTROL-C.
-backend_1  | Session data corrupted
-```
-
-「先に`docker-compose up --build`せい」とwarningが出ましたが無事に起動できました。
-`http://localhost:8000/api/`にアクセスするとDjano Rest frameworkのAPI画面が確認できます。
-
-### frontendのDocker化
+#### Dockerfileの作成
 
 つづいてfrontendのDocker化を行います。backendと同じようにfrontendディレクトリ下にDockerfileを作成し、docker-composeで起動させたいと思います。
 
 ```sh
 # docker-composeの作成
-$\gke-django-tutorial\frontend\type nul > Dockerfile
+$\gke-django-tutorial\frontend\web-front\type nul > Dockerfile
 # .dockerignoreの作成
-$\gke-django-tutorial\frontend\type nul > .dockerignore
+$\gke-django-tutorial\frontend\web-front\type nul > .dockerignore
 ```
 
-#### Dockerfile
-
 ```Dockerfile
-# frontend/Dockerfile
+# frontend/web-back/Dockerfile
 FROM node:12.14.1
 
-RUN mkdir /code
 WORKDIR /code
 
 # Install dependencies
-COPY package.json /code/
-COPY package-lock.json /code/
+COPY package.json ./
+COPY package-lock.json ./
 RUN npm install
 
 # Add rest of the client code
-COPY . /code/
+COPY . ./
+RUN npm run build
 
 EXPOSE 3000
 
 ```
 
-#### .dockerignore
-
 frontend に関しては `node_modules/` が巨大であるため、これをマウントしたりコピーしたりするとかなりの時間を要します。
-したがってfrontendの時と同じように`.dockerignore` を追加して node_modules をイメージビルドに使用しないようにしておきます。
 
 ```.dockerignore
 node_modules
 ```
 
-#### docker-compose.yml
+### frontendの開発(Nginx編)
+
+frontend-Pod内にもbackendと同じようにリバースプロキシサーバーとしてNginxコンテナを配置します。
+流れはbackendの時と同じです。
+
+```sh
+# Nginx用のファイル作成
+$\gke-django-tutorial\frontened\nginx\type nul > Dockerfile
+$\gke-django-tutorial\frontened\nginx\type nul > Dockerfile.dev
+$\gke-django-tutorial\frontend\nginx\type nul > default.conf
+$\gke-django-tutorial\frontend\nginx\type nul > default.dev.conf
+```
+
+リバースプロキシは`Nginxコンテナ:80` ⇒ `React:3000`となるようにしました。
+
+`location = /healthz`ディレクティブはGKEにデプロイ後に必要になるヘルスチェック用のパスです。
+
+`server`ディレクティブはGKEにデプロイする場合は`localhost:3000`とし、docker-composeで起動する場合は`web-front:3000`としています。
+これはdocker-composeで起動する場合はサービス名で名前解決をする必要があるためです。
+GKEにデプロイする場合は同じPod内にあるため、`localhost:3000`で名前解決します。
+
+```conf
+upstream react {
+    server web-front:3000;
+}
+
+; default.confの場合
+; upstream react {
+    ; server localhost:8000;
+; }
+
+server {
+
+    listen 80;
+
+    location = /healthz {
+        return 200;
+    }
+
+    location / {
+        proxy_pass http://react;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_redirect off;
+    }
+    location /sockjs-node {
+	    proxy_pass http://react;
+      proxy_http_version 1.1;
+	    proxy_set_header Upgrade $http_upgrade;
+	    proxy_set_header Connection "upgrade";
+	}
+
+    error_page 500 502 503 504    /50x.html;
+
+    location = /50x.html {
+        root    /usr/share/nginx/html;
+    }
+}
+
+```
+
+DockerfileはNginxの設定ファイルをNginxコンテナにコピーさせることで設定を反映させます。
+
+```Dockerfile
+# backend\nginx\Dockerfile.dev
+FROM nginx:1.17.4-alpine
+
+RUN rm /etc/nginx/conf.d/default.conf
+COPY default.dev.conf /etc/nginx/conf.d
+
+# backend\nginx\Dockerfile.devの場合
+# COPY default.conf /etc/nginx/conf.d
+
+```
+
+### frontendの開発(docker-compose編)
+
+docker-composeを使ってNginx+Reactの構成でコンテナを起動させたいと思います。
+
+```sh
+# docker-compose.ymlの作成
+$\gke-django-tutorial\frontend\type nul > docker-compose.yml
+```
 
 ```yaml
 # docker-compose.yml
 version: "3.7"
 
 services:
-  backend:
-    env_file: ./backend/.env
-    build: ./backend/.
-    command: python /code/manage.py runserver 0.0.0.0:8000 --settings /code/config.local_settings
+  web-front:
+    container_name: react-frontend
+    build: ./web-front/.
     volumes:
-      - ./backend:/code
-    ports:
-      - "8000:8000"
-    stdin_open: true
-    tty: true
-    command: python /code/manage.py runserver 0.0.0.0:8000
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-  frontend:
-    build: ./frontend/.
-    volumes:
-      - ./frontend:/code
+      - ./web-front:/code
       - /code/node_modules
-    ports:
-      - "3000:3000"
-    command: yarn start
     stdin_open: true
     tty: true
     environment:
       - CHOKIDAR_USEPOLLING=true
       - NODE_ENV=development
+    command: yarn start
+    networks:
+      - frontend_network
+
+  server:
+    container_name: nginx_front
+    build:
+      context: ./nginx/.
+      dockerfile: Dockerfile.dev
+    ports:
+      - "80:80"
     depends_on:
-      - backend
+      - web-front
+    networks:
+      - frontend_network
+
+networks:
+  frontend_network:
+    driver: bridge
 ```
 
-frontendの`depends_on`とすることでbackendコンテナが立ち上がったあとにfrontendコンテナが
-起動するようになります。
-
-environment に`CHOKIDAR_USEPOLLING=true`を追加することでイメージを再ビルドすることなく
-ホットリローディングしてくれるようになります。
-
-さっそくビルドしてコンテナを起動し直してみます。
-
+ビルドして起動してみます。
 
 ```sh
-# docker-composeの作成
-$\gke-django-tutorial\docker-compose up --build
+# イメージのビルド
+$\gke-django-tutorial\frontend\docker-compose build --no-cache
+
+# docker-composeの起動
+$\gke-django-tutorial\frontend\docker-compose up
 ```
 
 ビルドに時間がかかりますが、問題なく起動することができました。
-`http://localhost:3000`にアクセスすると元の画面が確認できます。
+
+`http://localhost:80`にアクセスするとbackendで追加したTodoアイテムが表示されているはずです。
+
+`http://localhost:80` ⇒ `Nginx(front)コンテナ:80` ⇒ `React:3000`となるように
+ポートフォワーディングされています。
+
+また、ブラウザから`http://localhost:8080/api/`へリクエストが送られることによってbackendからTodoアイテムが返答され、fronten側で表示させることができました。
+
+これでdocker-composeでfrontendに使用するコンテナが動作できていることが確認できました。
+
+### ローカル編まとめ
+
+docker-composeでNginx+DjagnoとNginx+Reactを起動させ、RestAPIでやりとりさせることができました。これをkubernetesへデプロイさせていきましょう。
 
 ## デプロイ
 
-GKEにデプロイしていきます。公式チュートリアルと被るところもあるかと思います。
+Google Kubernetes Engine(以下、GKE)にデプロイしていきます。
+[公式チュートリアル](https://cloud.google.com/python/django/kubernetes-engine)を大いに参考にしています。
 
-### プロジェクトを作成
+### GCPのプロジェクトを作成
 
-コンソールから新しいプロジェクトを開始します。
+GoogleアカウントにログインしてCloudコンソールから新しいプロジェクトを開始します。
 
 プロジェクト名: gke-django-tutorial
 場所: 組織なし
@@ -963,9 +1124,13 @@ GKEにデプロイしていきます。公式チュートリアルと被ると�
 
 参考 : https://cloud.google.com/billing/docs/how-to/modify-project?authuser=2
 
-### Cloud SDKをインストールして初期化
+### Cloud SDKを初期化
+
+GCPのリソースはローカルPCからCloud SDKを使って操作することができます。
+gcloudは既にインストールしてある想定です。
 
 ```sh
+# gcloudの初期化
 $\gke-django-tutorial\gcloud init
 
 Welcome! This command will take you through the configuration of gcloud.
@@ -1024,20 +1189,7 @@ Run `gcloud help config` to learn how to change individual settings
 This gcloud configuration is called [YOUR_PROJECT]. You can create additional configurations if you work with multiple accounts and/or projects.
 Run `gcloud topic configurations` to learn more.
 
-Some things to try next:
-
-* Run `gcloud --help` to see the Cloud Platform services you can interact with. And run `gcloud help COMMAND` to get help on any gcloud command.
-* Run `gcloud topic --help` to learn about advanced features of the SDK like arg files and output formatting
-
-
-Updates are available for some Cloud SDK components.  To install them,
-please run:
-  $ gcloud components update
-
-
-
-To take a quick anonymous survey, run:
-  $ gcloud survey
+[以下省略]
 
 ```
 
@@ -1054,22 +1206,24 @@ $\gke-django-tutorial\gcloud services enable sqladmin
 Operation "operations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" finished successfully.
 ```
 
-#### CloudSQL proxy
+#### CloudSQL proxyのダウンロード
 
 Cloud SQL Proxyをダウンロードして`cloud_sql_proxy.exe`に名前を変更します。
-参考: https://cloud.google.com/python/django/kubernetes-engine#installingthecloudsqlproxy
+これは`$\gke-django-tutorial\`下に設置しました。
 
-#### インスタンスの作成
+- 参考: [Installing the Cloud SQL Proxy](https://cloud.google.com/python/django/kubernetes-engine#installingthecloudsqlproxy)
 
-CloudSQLインスタンスを作成します。
+#### CloudSQL インスタンスの作成
+
+CloudコンソールからCloudSQLのインスタンスを作成します。
 
 ```sh
 データベースエンジンの選択: PostgreSQL
-インスタンスID: [DB_ID]
+インスタンスID: [SQL_INSTANCE_NAME]
 パスワード: [YOUR_PASSWORD]
 ロケーション:
-    リージョン: [DB_REGION]
-    ゾーン: [DB_ZONE]
+    リージョン: [SQL_REGION_NAME]
+    ゾーン: [DATABASE_ZONE]
 データベースのバージョン: PostgreSQL 11
 ```
 
@@ -1079,20 +1233,21 @@ CloudSQLインスタンスを作成します。
 
 ```sh
 # connecsionNameの確認
-$\gke-django-tutorial\gcloud sql instances describe db_sample
-connectionName: [YOUR_PROJECT]:[DB_REGION]:[DB_ID]
+$\gke-django-tutorial\gcloud sql instances describe [SQL_INSTANCE_NAME]
+connectionName: [YOUR_PROJECT]:[SQL_REGION_NAME]:[SQL_INSTANCE_NAME]
 
 # インスタンスの接続
-$\gke-django-tutorial\gcoud_sql_proxy.exe -instances="[YOUR_PROJECT]:[DB_REGION]:[DB_ID]"=tcp:5432
+$\gke-django-tutorial\gcoud_sql_proxy.exe -instances="[YOUR_PROJECT]:[SQL_REGION_NAME]:[SQL_INSTANCE_NAME]"=tcp:5432
 2020/04/28 17:49:51 Listening on 127.0.0.1:5432 for gke-django-tutorial:asia-northeast1:websql
 2020/04/28 17:49:51 Ready for new connections
 ```
 
 このコマンドによって手元のPCからCloudSQLインスタンスに接続することができました。
+インスタンスに接続したコマンドプロンプトはそのままにして、別のコマンドプロントで作業します。
 
 #### データベースの作成
 
-コンソールからデータベースを作成しましょう。コンソール上の`websql`を選択して`データベース`から`データベースを作成`することができます。
+コンソールからデータベースを作成しましょう。コンソール上の`[SQL_INSTANCE_NAME]`を選択して`データベース`から`データベースを作成`することができます。
 
 ```sh
 データベース名: [DATABASE_NAME]
@@ -1100,7 +1255,7 @@ $\gke-django-tutorial\gcoud_sql_proxy.exe -instances="[YOUR_PROJECT]:[DB_REGION]
 
 #### データベースユーザーの作成
 
-データベースのユーザーアカウントを作成しておきます。
+コンソールからデータベースのユーザーアカウントを作成しておきます。
 ```sh
 ユーザー名: [DATABASE_USER]
 パスワード: [DATABASE_PASSWORD]
@@ -1108,51 +1263,48 @@ $\gke-django-tutorial\gcoud_sql_proxy.exe -instances="[YOUR_PROJECT]:[DB_REGION]
 
 #### CloudSQLのサービスアカウントの作成
 
-CloudSQlのサービスアカウントを作成して、json形式のプライベートキーをダウンロードしましょう。
+コンソールからCloudSQlのサービスアカウントを作成して、json形式のプライベートキーをダウンロードしましょう。
 
 ```sh
 サービスアカウント名: [SERVICE_ACCOUNT_NAME]
 サービスアカウントID: [SERVICE_ACCOUNT_NAME]@BBBBBBBBB.iam.gservice
 権限: Cloud SQL 管理者
-⇒キーの作成でjson形式を選択
+⇒プライベートキーの作成でjson形式を選択
+⇒json形式のプライベートキー: ZZZZZZZZZZZZZZZ.jsonがダウンロードされる
 ```
+
+プロジェクト直下に`secrets\cloudsql\`というディレクトリを作成して作成したプライベートキーを設置します。
 
 ```sh
 $\gke-django-tutorial\mkdir secrets
-```
+$\gke-django-tutorial\cd secrets
+$\gke-django-tutorial\secrets\mkdir cloudsql
+$\gke-django-tutorial\secrets\cd cloudsql
 
-プライベートキーはプロジェクト直下に`secrets\cloudsql`というディレクトリを作成して設置しました。
+# プライベートキーのしておく
+$\gke-django-tutorial\secrets\cloudsql\dir
+ZZZZZZZZZZZZZZZ.json
+```
 
 #### 環境変数の設定
 
-DjangoのデータベースをCloudSQLに設定して起動していきたいと思います。
+DjangoのデータベースをCloudSQLに設定して起動し、CloudSQLを利用する準備をしていきます。
+ローカルのsqlite3でも行ったように、テーブルのマイグレーションをローカル環境からcloud_sql_proxyを通して行っていきます。
+
 `DATABASE_USER`と`DATABASE_PASSWORD`を環境変数として利用するため、`.env`ファイルに追加します。
 keyとvalueの間にスペースを置かないようにしましょう。
 
 ```sh
 SECRET_KEY='XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
 DEBUG=False
-DATABASE_USER=master
-DATABASE_PASSWORD=websql-pass
-```
-
-#### Pythonパッケージの追加
-
-DjangoからPostgresを使用するにはパッケージを追加する必要があります。
-デプロイに必要なパッケージを追加しておきます。
-
-```sh
-# パッケージのインストール
-(venv)$\gke-django-tutorial\backend\python -m pip install wheel gunicorn psycopg2-binary
-
-# requirements.txtの更新
-(venv)$\gke-django-tutorial\backend\python -m pip freeze > requirements.txt
+DATABASE_USER=[DATABASE_USER]
+DATABASE_PASSWORD=[DATABASE_PASSWORD]
 ```
 
 #### backend/config/settings.py
 
 DjangoのDATABASE設定をdb.sqlite3からCloudSQLに変更します。
-`.env`ファイルを直接参照する必要があるため、`Python-dotenv`を使って読み込みます。
+`.env`ファイルを直接参照する必要があるため、`python-dotenv`を使って読み込みます。
 
 ```python
 # backend/config/setting.sy
@@ -1191,7 +1343,7 @@ DATABASES = {
 
 #### マイグレーション
 
-データベースがCloudSQLに変更したのでマイグレーションし直す必要があります。
+データベースの設定をCloudSQLに変更したのでマイグレーションし直す必要があります。
 
 ```sh
 (venv)$\gke-django-tutorial\backend\python manage.py migrate
@@ -1233,15 +1385,19 @@ Password (again):
 Superuser created successfully.
 ```
 
-開発用サーバーを立ち上げてadminページからデータを3つほど追加しておきましょう。
+開発用サーバーを立ち上げて管理者ページからデータを3つほど追加しておきましょう。
 
 ```sh
 (venv)$\gke-django-tutorial\backend\python manage.py runserver
 ```
 
+`http://localhost:8000/admin/`で管理者ページにログインすると、CloudSQLインスタンスに作成したデータベース上にデータを格納することができます。
+2，3個アイテムを追加しておきましょう。
+
 ### Cloud Storageの準備
 
-静的ファイルをGoogle Cloud Storageに格納するための設定を行います。
+静的ファイルをGoogle Cloud Storage(以下、GCS)に格納して、静的ファイルはGCSから配信するための設定を行います。
+
 ストレージを作成して静的ファイルをアップロードします。これをしないとadmin画面などのcssが反映されません。
 
 ```sh
@@ -1269,7 +1425,7 @@ Setting default object ACL on gs://[STORAGE_NAME]/...
 STATIC_URL = 'https://storage.googleapis.com/[STORAGE_NAME]/static/'
 ```
 
-### クラスター作成
+### Kubernetesクラスターの作成
 
 クラスターを作成してコンテナをデプロイします。ServiceとIngressを設定することで外部からアクセスすることが可能になります。
 
@@ -1290,25 +1446,25 @@ $\gke-django-tutorial\gcloud container clusters get-credentials [K8S_CLUSTER] --
 Fetching cluster endpoint and auth data.
 kubeconfig entry generated for [K8S_CLUSTER].
 
-# コンテキストが適用されているかどうかを確認する。
-$\gke-django-tutorial\kubectl config current-context
+# コンテキストが適用されているかどうかを確認する
+$\gke-django-tutorial\manifests\kubectl config current-context
 ```
 
 ### Secrets
 
-秘匿すべき変数はSecretsリソースに登録して使用します。
+データベースのユーザー名、パスワードなどの秘匿すべき環境変数は`.env`で管理してきましたが、KubernetesではSecretsリソースに登録して使用します。
 
 #### Cloud SQL
 
 Secretsを利用することでCloudSQLのユーザー名、パスワードを環境変数として安全に使用することができます。
 GKE から Cloud SQL のインスタンスを使用するにあたって、インスタンスレベルアクセスとデータベースアクセスに関するSecretsを作成する必要があります。
 
-参考: [インスタンスのアクセス制御]:(https://cloud.google.com/sql/docs/mysql/instance-access-control)
+- 参考: [インスタンスのアクセス制御]:(https://cloud.google.com/sql/docs/mysql/instance-access-control)
 
 インスタンスレベルのアクセスについてSecretsを作成します。
 
 ```sh
-$\gke-django-tutorial\kubectl create secret generic cloudsql-oauth-credentials --from-file=credentials.json=".\secrets\cloudsql\ZZZZZZZZZZZZZZZ.json"
+$\gke-django-tutorial\manifests\kubectl create secret generic cloudsql-oauth-credentials --from-file=credentials.json=".\secrets\cloudsql\ZZZZZZZZZZZZZZZ.json"
 
 secret/cloudsql-oauth-credentials created
 ```
@@ -1316,7 +1472,7 @@ secret/cloudsql-oauth-credentials created
 データベースへアクセスに関する secret を作成します。
 
 ```sh
-$\gke-django-tutorial\kubectl create secret generic cloudsql --from-literal=username="[DATABASE_USER]" --from-literal=password="[DATABASE_PASSWORD]"
+$\gke-django-tutorial\manifests\kubectl create secret generic cloudsql --from-literal=username="[DATABASE_USER]" --from-literal=password="[DATABASE_PASSWORD]"
 ```
 
 #### SECRET_KEY
@@ -1325,7 +1481,7 @@ $\gke-django-tutorial\kubectl create secret generic cloudsql --from-literal=user
 `backend/config/settings.py`の`DEBUG`はFalseとしておきます。
 
 ```sh
-$\gke-django-tutorial\kubectl create secret generic secret-key --from-literal=SECRET_KEY="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+$\gke-django-tutorial\manifests\kubectl create secret generic secret-key --from-literal=SECRET_KEY="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 ```
 
 `backend/config/settings.py`で関係のある個所は以下のような状態になります。
@@ -1375,85 +1531,52 @@ Your active configuration is: [YOUR_PROJECT]
 gke-django-tutorial
 
 # イメージのビルド
-# backend
-$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/backend:latest ./backend
+# web-back(Django)
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/web-back:latest ./backend/web-back/.
 
-# frontend
-$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/frontend:latest ./frontend
+# nginx-back
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/nginx-back:latest ./backed/nginx/.
+
+# web-front(React)
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/web-front:latest ./frontend/web-front/.
+
+# nginx-back
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/nginx-front:latest ./frontend/nginx/.
 ```
 
+### コンテナイメージのアップロード
+
+作成した4つのDockerイメージをGoocle Container Registry(以下, GCR)にアップロードします。
+
 ```sh
-# イメージをGCRにアップロードする
 # backend
-$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/backend:latest
-WARNING: `gcloud docker` will not be supported for Docker client versions above 18.03.
-
-As an alternative, use `gcloud auth configure-docker` to configure `docker` to
-use `gcloud` as a credential helper, then use `docker` as you would for non-GCR
-registries, e.g. `docker pull gcr.io/project-id/my-image`. Add
-`--verbosity=error` to silence this warning: `gcloud docker
---verbosity=error -- pull gcr.io/project-id/my-image`.
-
-See: https://cloud.google.com/container-registry/docs/support/deprecation-notices#gcloud-docker
-
-The push refers to repository [gcr.io/[YOUR_PROJECT]/backend]
-12ed78fdfd14: Pushed
-485427ae6881: Pushed
-bb530f6bab17: Pushed
-4eae8da6dc9e: Pushed
-a91544cdf6ea: Pushed
-956d28316107: Layer already exists
-86120ec29f78: Layer already exists
-5d34cecc2826: Layer already exists
-baf481fca4b7: Layer already exists
-3d3e92e98337: Layer already exists
-8967306e673e: Layer already exists
-9794a3b3ed45: Layer already exists
-5f77a51ade6a: Layer already exists
-e40d297cf5f8: Layer already exists
-latest: digest: sha256:3905957cfddea8454288b460adf8b134d0de1bc0791dbc8cf3fe7b9e6012512f size: 3267
+$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/web-back:latest
+$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/nginx-back:latest
 
 # frontend
-$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/frontend:latest
-WARNING: `gcloud docker` will not be supported for Docker client versions above 18.03.
-
-As an alternative, use `gcloud auth configure-docker` to configure `docker` to
-use `gcloud` as a credential helper, then use `docker` as you would for non-GCR
-registries, e.g. `docker pull gcr.io/project-id/my-image`. Add
-`--verbosity=error` to silence this warning: `gcloud docker
---verbosity=error -- pull gcr.io/project-id/my-image`.
-
-See: https://cloud.google.com/container-registry/docs/support/deprecation-notices#gcloud-docker
-
-The push refers to repository [gcr.io/[YOUR_PROJECT]/frontend]
-c6c151685fbb: Pushed
-ef3845fc4e9d: Pushed
-069d14dab7a7: Pushed
-a3a63dfb31f4: Pushed
-2fcc481d7fdd: Pushed
-203542cdccd7: Pushed
-37d4010f40f0: Pushed
-f895d244bc8e: Pushed
-03dc1830d2d5: Pushed
-1d7382716a27: Pushed
-01727b1a72df: Layer already exists
-69dfa7bd7a92: Layer already exists
-4d1ab3827f6b: Layer already exists
-7948c3e5790c: Layer already exists
-latest: digest: sha256:26d0836290483f2f58141db9bd18a66a5c5b99a3ce9da3643679592d0d8bb5ec size: 3261
-
+$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/web-front:latest
+$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/nginx-front:latest
 ```
 
 ### Frontendのデプロイ
 
-FrontendのDeploymentを作成してデプロイします。deploymentとして`frontend-react.yml`というファイルを作成します。
+kubernetesクラスターはkubernetesのリソースを記述したマニフェストファイルを適用することでクラスターの構成を組立ていくことができます。
+
+複数のコンテナが一緒になったPodを追加するため、Deploymentファイルを作成します。
+
+まずはfontendのDeploymentを作成してfrontendのPodをデプロイします。
+Deploymentとして`frontend-react.yml`というファイルを作成します。
 
 ```sh
-$\gke-django-tutorial\type nul > frontend-deployment.yml
+# マニフェストファイルを格納するディレクトリを作成
+$\gke-django-tutorial\mkdir manifests
+$\gke-django-tutorial\cd manifests
+
+# Deploymentファイルの作成
+$\gke-django-tutorial\manifests\type nul > frontend-deployment.yml
 ```
 
 ```yml
-# frontend-deployment.yml
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
@@ -1468,27 +1591,36 @@ spec:
         app: frontend
     spec:
       containers:
-        - name: frontend
-          image: gcr.io/[YOUR_PROJECT]/frontend:latest
+        - name: web-front
+          image: gcr.io/gke-django-tutorial/web-front:latest
           imagePullPolicy: Always
           command: ["npm", "start"]
           ports:
-          - containerPort: 3000
+            - containerPort: 3000
+        - name: nginx-front
+          image: gcr.io/gke-django-tutorial/nginx-front:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
 
 ```
 
+Deploymentの中身はdocker-composeと非常によく似ています。Pod内は`Nginx+React`で構成されています。
+
+クラスターへのデプロイはkubectlを使って行います。インストールしてあることを想定しています。
+
 ```sh
 # Deploymentをデプロイ
-$\gke-django-tutorial\kubectl create -f frontend-deployment.yml
+$\gke-django-tutorial\manifests\kubectl create -f frontend-deployment.yml
 deployment.extensions/frontend created
 
 # 確認
-$\gke-django-tutorial\kubectl get pods
+$\gke-django-tutorial\manifests\kubectl get pods
 NAME                        READY   STATUS              RESTARTS   AGE
 frontend-77f75d4c47-lgzv6   0/1     CrashLoopBackOff   6          9m39s
 ```
 
-#### CrashLoopBackOff
+#### frontendのCrashLoopBackOff
 
 `STATUS`が`CrashLoopBackOff`となってしましました。ログを確認してみます。
 
@@ -1506,12 +1638,13 @@ Starting the development server...
 ```
 
 Reactの環境構築周りに問題があるらしいことがわかります。
-- [stack overflow : GKE deployment ReactJS app CrashLoopBackoff](https://stackoverflow.com/questions/61463529/gke-deployment-reactjs-app-crashloopbackoff)
 
-これを参考にすると、どうやら`react-scripts`が悪さをしているようです。
+- 参考: [stack overflow : GKE deployment ReactJS app CrashLoopBackoff](https://stackoverflow.com/questions/61463529/gke-deployment-reactjs-app-crashloopbackoff)
+
+どうやら`react-scripts`が悪さをしているようです。
 
 `frontend\package-lock.json`を確認すると`react-scripts`のバージョンは`3.4.1`でした。
-`3.4.0`でインストールし直したあと、もう一度デプロイします。
+`3.4.0`でインストールし直したあと、もう一度GCRへします。
 
 ```sh
 # 3.4.1をアンインストール
@@ -1521,16 +1654,16 @@ $\gke-django-tutorial\frontend\npm uninstall react-scripts@3.4.1
 $\gke-django-tutorial\frontend\npm install react-scripts@3.4.0 --save
 
 # frontendコンテナイメージの再ビルド
-$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/frontend:latest ./frontend
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/[YOUR_PROJECT]/web-front:latest ./frontend/web-front/.
 
 # GCRへのアップロード
-$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/frontend:latest
+$\gke-django-tutorial\gcloud docker -- push gcr.io/[YOUR_PROJECT]/web-front:latest
 
-# frontendのDeploymentを作成
-$\gke-django-tutorial\kubectl apply -f frontend-deployment.yml
+# frontendのpodを削除して新しいPodを立ち上げる
+$\gke-django-tutorial\manifests\kubectl delete pod frontend-77f75d4c47-lgzv6
 
 # 確認
-$\gke-django-tutorial\kubectl get pods
+$\gke-django-tutorial\manifests\kubectl get pods
 
 ```
 
@@ -1543,7 +1676,7 @@ frontendと同じようにbackendのDeploymentを作成してデプロイしま�
 `backend-deployment.yml`を作成します。
 
 ```sh
-$\gke-django-tutorial\type nul > backend-deployment.yml
+$\gke-django-tutorial\manifests\type nul > backend-deployment.yml
 ```
 
 ```yml
@@ -1551,18 +1684,20 @@ apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
   name: backend
-  namespace: default
+  labels:
+    app: backend
 spec:
-  replicas: 3
+  replicas: 1
   template:
     metadata:
       labels:
         app: backend
     spec:
       containers:
-        - name: backend
-          image: gcr.io/[YOUR_PROJECT]/backend:v1
+        - name: web-back
+          image: gcr.io/gke-django-tutorial/web-back:latest
           imagePullPolicy: Always
+          command: ["gunicorn", "-b", ":8000", "config.wsgi"]
           env:
             - name: DATABASE_USER
               valueFrom:
@@ -1581,14 +1716,13 @@ spec:
                   key: SECRET_KEY
           ports:
             - containerPort: 8000
-
         - image: gcr.io/cloudsql-docker/gce-proxy:1.16
           name: cloudsql-proxy
           command:
             [
               "/cloud_sql_proxy",
               "--dir=/cloudsql",
-              "-instances=[YOUR_PROJECT]:[DB_REGION]:[DB_ID]=tcp:5432",
+              "-instances=gke-django-tutorial:asia-northeast1:websql=tcp:5432",
               "-credential_file=/secrets/cloudsql/credentials.json",
             ]
           volumeMounts:
@@ -1599,6 +1733,11 @@ spec:
               mountPath: /etc/ssl/certs
             - name: cloudsql
               mountPath: /cloudsql
+        - image: gcr.io/gke-django-tutorial/nginx-back:latest
+          name: nginx-back
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
       volumes:
         - name: cloudsql-oauth-credentials
           secret:
@@ -1610,45 +1749,45 @@ spec:
           emptyDir:
 ```
 
-Django側で必要な環境変数を作成したSecretSから参照していることが確認できます。
+backend側のPodは`web-back(Django)`, `nginx-back(Nginx)`, `cloudsql-proxy`のコンテナがまとめられています。
+
+Django側で必要な環境変数を作成したSecretsから参照していることが確認できます。
 backendのイメージは既に作成してGCRにpushしてあるので、早速デプロイします。
 
 ```sh
 # backendのデプロイ
-$\gke-django-tutorial\kubectl create -f backend-deployment.yml
+$\gke-django-tutorial\manifests\kubectl create -f backend-deployment.yml
 
 # 確認
-$\gke-django-tutorial\kubectl get pods
+$\gke-django-tutorial\manifests\kubectl get pods
 NAME                        READY   STATUS    RESTARTS   AGE
-backend-989b96b5-ldc9b      2/2     Running   0          35s
+backend-989b96b5-ldc9b      3/3     Running   0          35s
 frontend-77f75d4c47-f2fdl   1/1     Running   0          28m
 
-$\gke-django-tutorial\kubectl logs backend-989b96b5-ldc9b backend
+$\gke-django-tutorial\manifests\kubectl logs backend-989b96b5-ldc9b web-back
 [2020-04-29 14:55:11 +0000] [1] [INFO] Starting gunicorn 20.0.4
 [2020-04-29 14:55:11 +0000] [1] [INFO] Listening at: http://0.0.0.0:8000 (1)
 [2020-04-29 14:55:11 +0000] [1] [INFO] Using worker: sync
 [2020-04-29 14:55:11 +0000] [8] [INFO] Booting worker with pid: 8
 
-$\gke-django-tutorial\kubectl logs backend-989b96b5-ldc9b cloudsql-proxy
-2020/04/29 14:55:10 current FDs rlimit set to 1048576, wanted limit is 8500. Nothing to do here.
-2020/04/29 14:55:10 using credential file for authentication; email=XXXXX@gke-django-tutorial.iam.gserviceaccount.com
-2020/04/29 14:55:10 Listening on 127.0.0.1:5432 for gke-django-tutorial:asia-northeast1:websql
-2020/04/29 14:55:10 Ready for new connections
+$\gke-django-tutorial\manifests\kubectl logs backend-989b96b5-ldc9b nginx-back
+
+$\gke-django-tutorial\manifests\kubectl logs backend-989b96b5-ldc9b cloudsql-proxy
 
 ```
 
-STATUSがRunningになっているのんで問題なさそうです。
+STATUSがRunningになっているので問題なく機能しているようです。
 
 ### Serviceの追加
 
-ServiceタイプをLoadBalancerにするかExternalNameにして外部公開する方法がありますが、
-今回はIngressを使ってServiceを公開する構成にしたいと思います。
+KubernetesにデプロイしたコンテナはServiceかIngressを使って外部公開することができます。
+Serviceを使って外部公開する場合、ServiceタイプをLoadBalancerにするかExternalNameにして外部公開する方法がありますが、今回はIngressを使ってServiceを公開する構成にしたいと思います。
 
-ServiceもDeploymentと同様、yml形式で宣言ファイルを作成し、kubectlでGKEにリソースを追加することができます。
+ServiceもDeploymentと同様、yml形式でマニフェストファイルを作成し、kubectlでGKEにリソースを追加することができます。
 
 ```sh
 # ファイルの作成
-\gke-django-tutorial\type nul > service.yml
+\gke-django-tutorial\manifests\type nul > service.yml
 ```
 
 ```yml:service.yml
@@ -1661,8 +1800,8 @@ spec:
   selector:
     app: frontend
   ports:
-    - port: 3000
-      targetPort: 3000
+    - port: 80
+      targetPort: 80
       protocol: TCP
 ---
 kind: Service
@@ -1674,26 +1813,28 @@ spec:
   selector:
     app: backend
   ports:
-    - port: 8000
-      targetPort: 8000
+    - port: 80
+      targetPort: 80
       protocol: TCP
 
 ```
 
 ServiceタイプをNodePortとしました。
-外部からのリクエストはIngressのLoadBalancerがServiceに転送し、Serviceはノードの8000ポート(backend-Django)に転送しています。
+外部からのリクエストはIngressのLoadBalancerがServiceに転送し、Serviceはノードの80ポート(backend-Django)に転送しています。
+
+ノードの80ポートはPod内のリバースプロキシ(Nginx)に転送され、アプリケーションとのやり取りが実現します。
 
 ```sh
 # Serviceの追加
-\gke-django-tutorial\kubectl create -f service.yml
+\gke-django-tutorial\manifests\kubectl create -f service.yml
 service/frontend-node-service created
 service/backend-node-service created
 
 # Serviceの確認
-\gke-django-tutorial\kubectl get services
+\gke-django-tutorial\manifests\kubectl get services
 NAME                    TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)          AGE
-backend-node-service    NodePort    10.28.5.61   <none>        8000:31332/TCP   32s
-frontend-node-service   NodePort    10.28.8.91   <none>        3000:31535/TCP   35s
+backend-node-service    NodePort    10.28.5.61   <none>        80:31332/TCP   32s
+frontend-node-service   NodePort    10.28.8.91   <none>        30:31535/TCP   35s
 kubernetes              ClusterIP   10.28.0.1    <none>        443/TCP          22h
 ```
 
@@ -1703,7 +1844,7 @@ HTTP(S)ロードバランサを作成するIngressを使ってアプリケーシ
 
 ```sh
 # Ingressの追加
-\gke-django-tutorial\type nul > ingress.yml
+\gke-django-tutorial\manifests\type nul > ingress.yml
 ```
 
 Ingressの実態はIngressコントローラーであり、Ingressコントローラーは指定することができます。
@@ -1726,184 +1867,68 @@ spec:
       - path: /*
         backend:
           serviceName: frontend-node-service
-          servicePort: 3000
+          servicePort: 80
       - path: /api/*
         backend:
           serviceName: backend-node-service
-          servicePort: 8000
+          servicePort: 80
       - path: /admin/*
         backend:
           serviceName: backend-node-service
-          servicePort: 8000
+          servicePort: 80
 ```
 
 ```sh
 # Ingressの追加
-\gke-django-tutorial\kubectl create -f ingress.yml
+\gke-django-tutorial\manifests\kubectl create -f ingress.yml
 ingress.extensions/ingress-service created
 
 # 確認
-\gke-django-tutorial\kubectl get ingress
+\gke-django-tutorial\manifests\kubectl get ingress
 NAME              HOSTS   ADDRESS        PORTS   AGE
 ingress-service   *       34.95.105.61   80      112s
 ```
 
-これで外部へ公開ができたと思いきや、コンソールを確認すると`backend services are in UNHEALTHY state`なるメッセージが確認できます。
+ADDRESSが外部公開用のIPアドレスになります。これで外部へ公開ができたと思いきや、コンソールを確認すると`backend services are in UNHEALTHY state`なるメッセージが確認できます。
 
-#### backendへのヘルスチェックに対応する
+#### Podへのヘルスチェックに対応する
 
 外部公開するIngressを通して公開されるServiceはロードバランサからのヘルスチェックに応答する必要があります。
+
 このヘルスチェックはデフォルトでは`/`パスに対するGETリクエストに対し、HTTP200ステータスのレスポンスを期待しています。
+
 frontendのReact側では`/`パスに対してHTTP200ステータスを返答しますが、backendのDjango側では`/`への返答は追加していません。
 
-今回はヘルスチェックへのパスを`/api/healthz`に変更し、Djangoは`/api/healthz`に対してHTTP200ステータスを返答するように追加します。
+ヘルスチェックのリクエスト先はDeploymentを使って変更することができます。
+
+- 参考: 
+  - [Ingress でヘルスチェックのリクエスト先を変更する](https://qiita.com/nirasan/items/24858dfa03883cd4aa79)
+
+  - [【GKE】Ingressのヘルスチェックで All backend services are in UNHEALTHY stateが出る場合の原因と解決方法](https://qiita.com/arthur_foreign/items/9e7a2cf4360ffcefcc9a#nuxtjs%E3%81%AEexpress%E3%81%A7health%E3%81%AE%E3%83%91%E3%82%B9%E3%81%AB%E3%83%AA%E3%82%AF%E3%82%A8%E3%82%B9%E3%83%88%E3%81%8C%E9%A3%9B%E3%82%93%E3%81%A0%E3%82%89200%E3%81%AE%E3%82%B9%E3%83%86%E3%83%BC%E3%82%BF%E3%82%B9%E3%82%B3%E3%83%BC%E3%83%89%E3%82%92%E8%BF%94%E3%81%99)
+
+今回はPod内に追加したリバースプロキシ(Nginx)にヘルスチェック用の`location=/healthz`を追加していました。
+
+今回はヘルスチェックへのパスを`/healthz`に変更し、Pod内のリバースプロキシは`/healthz`に対してHTTP200ステータスを返答するようにします。
 
 参考:
-- [Ingress for GKE ヘルスチェック](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress?hl=ja#health_checks)
-
-- [Ingress でヘルスチェックのリクエスト先を変更する](https://qiita.com/nirasan/items/24858dfa03883cd4aa79)
-
-- [【GKE】Ingressのヘルスチェックで All backend services are in UNHEALTHY stateが出る場合の原因と解決方法](https://qiita.com/arthur_foreign/items/9e7a2cf4360ffcefcc9a#nuxtjs%E3%81%AEexpress%E3%81%A7health%E3%81%AE%E3%83%91%E3%82%B9%E3%81%AB%E3%83%AA%E3%82%AF%E3%82%A8%E3%82%B9%E3%83%88%E3%81%8C%E9%A3%9B%E3%82%93%E3%81%A0%E3%82%89200%E3%81%AE%E3%82%B9%E3%83%86%E3%83%BC%E3%82%BF%E3%82%B9%E3%82%B3%E3%83%BC%E3%83%89%E3%82%92%E8%BF%94%E3%81%99)
-
-##### Deployment
-
-DeploymentにはLivenessProbeとReadinessProbeを追加してデプロイし直しましょう。
-
-```yml
-# backend-deployment.yml
-apiVersion: extensions/v1beta1
-kind: Deployment
-metadata:
-  name: backend
-  labels:
-    app: backend
-spec:
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-      - name: backend
-        image: gcr.io/[YOUR_PROJECT]/backend:latest
-        imagePullPolicy: Always
-        command: ["gunicorn", "-b", ":8000", "config.wsgi"]
-        env:
-          - name: DATABASE_USER
-            valueFrom:
-              secretKeyRef:
-                name: cloudsql
-                key: username
-          - name: DATABASE_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: cloudsql
-                key: password
-          - name: SECRET_KEY
-            valueFrom:
-              secretKeyRef:
-                name: secret-key
-                key: SECRET_KEY
-        ports:
-        - containerPort: 8000
-        livenessProbe:
-          httpGet:
-            path: /api/healthz
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        readinessProbe:
-          httpGet:
-            path: /api/healthz
-            port: 8000
-          initialDelaySeconds: 15
-          periodSeconds: 6
-
-      - image: gcr.io/cloudsql-docker/gce-proxy:1.16
-        name: cloudsql-proxy
-        command:
-          [
-            "/cloud_sql_proxy",
-            "--dir=/cloudsql",
-            "-instances=[YOUR_PROJECT]:[DB_REGION]:[DB_ID]=tcp:5432",
-            "-credential_file=/secrets/cloudsql/credentials.json",
-          ]
-        volumeMounts:
-          - name: cloudsql-oauth-credentials
-            mountPath: /secrets/cloudsql
-            readOnly: true
-          - name: ssl-certs
-            mountPath: /etc/ssl/certs
-          - name: cloudsql
-            mountPath: /cloudsql
-      volumes:
-        - name: cloudsql-oauth-credentials
-          secret:
-            secretName: cloudsql-oauth-credentials
-        - name: ssl-certs
-          hostPath:
-            path: /etc/ssl/certs
-        - name: cloudsql
-          emptyDir:
-
-```
-
-##### Django
-
-`/api/healthz`へのリクエストに対してHTTP200を返すように変更します。
-
-```python:todo/urls.py
-# todo/urls.py
-from django.urls import path, include
-from .views import ListTodo, DetailTodo, health_check
-
-urlpatterns = [
-    path('<int:pk>/', DetailTodo.as_view()),
-    path('', ListTodo.as_view()),
-    path('healthz', health_check, name="healthz")  # 追加
-]
-```
-
-```python:todo/views.py
-# todos/views.py
-
-from django.shortcuts import render
-from django.http import HttpResponse
-from rest_framework import generics
-from .models import Todo
-from .serializers import TodoSerializer
-
-def health_check(request):
-    response = HttpResponse(status=200)
-    return response
-
-class ListTodo(generics.ListAPIView):
-    queryset = Todo.objects.all()
-    serializer_class = TodoSerializer
+  - [Ingress for GKE ヘルスチェック](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress?hl=ja#health_checks)
+  - [GKE Ingress + gRPC アプリケーションのヘルスチェックをどうにかする](https://medium.com/google-cloud-jp/ce-advent-calendar19-gke-ingress-grpc-health-check-55ce0167322c)
 
 
-class DetailTodo(generics.RetrieveAPIView):
-    queryset = Todo.objects.all()
-    serializer_class = TodoSerializer
-```
+コンソール上から`Compute Engine > ヘルスチェック`を確認すると、Serviceに対するヘルスチェック先のパス一覧が表示されます。
 
-##### 更新
+backendサービス, frontendサービスのポートと一致する使用リソースのパスを`/healthz`に変更しておきましょう。
+
+今回のサービスのポートは31332と31535になります。
 
 ```sh
-# Ingressの更新
-\gke-django-tutorial\kubectl apply -f ingress.yml
-ingress.extensions/ingress-service created
-
-# 確認
-\gke-django-tutorial\kubectl get ingress
-NAME              HOSTS   ADDRESS        PORTS   AGE
-ingress-service   *       34.95.105.61   80      112s
+# Serviceの確認
+\gke-django-tutorial\manifests\kubectl get services
+NAME                    TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)          AGE
+backend-node-service    NodePort    10.28.5.61   <none>        80:31332/TCP   32s
+frontend-node-service   NodePort    10.28.8.91   <none>        30:31535/TCP   35s
+kubernetes              ClusterIP   10.28.0.1    <none>        443/TCP          22h
 ```
-
-また、コンソール上から`Compute Engine > ヘルスチェック`を確認すると、Serviceに対するヘルスチェック先のパス一覧が表示されます。
-
-backendサービスのポートと一致する使用リソースのパスを`/api/healthz`に変更しておきましょう。
 
 #### 静的IPアドレスで公開する
 
@@ -1911,8 +1936,8 @@ backendサービスのポートと一致する使用リソースのパスを`/ap
 
 ```sh
 # 静的IPアドレスの予約
-\gke-django-tutorial\gcloud compute addresses create [STATIC_IP_ADDRESS] --global
-Created [https://www.googleapis.com/compute/v1/projects/[YOUT_PROJECT]/global/addresses/[STATIC_IP_ADDRESS]].
+\gke-django-tutorial\gcloud compute addresses create [STATIC_IP_ADDRESS_ID] --global
+Created [https://www.googleapis.com/compute/v1/projects/[YOUT_PROJECT]/global/addresses/[STATIC_IP_ADDRESS_ID]].
 ```
 
 ```yml:ingress.yml
@@ -1923,7 +1948,7 @@ metadata:
   namespace: default
   annotations:  # 追加
     kubernetes.io/ingress.class: gce
-    kubernetes.io/ingress.global-static-ip-name: [STATIC_IP_ADDRESS]  # 追加
+    kubernetes.io/ingress.global-static-ip-name: [STATIC_IP_ADDRESS_ID]  # 追加
 
 spec:
   rules:
@@ -1933,7 +1958,7 @@ spec:
 
 ```sh
 # ingressの更新
-\gke-django-tutorial\kubectl apply -f ingress.yml
+\gke-django-tutorial\manifests\kubectl apply -f ingress.yml
 
 # 静的IPアドレスの確認
 \gke-django-tutorial\gcloud get ingress
@@ -1945,7 +1970,8 @@ ingress-service   *       12.345.678.910   80      40m
 [{"id":1,"title":"title1","body":"body1"},{"id":2,"title":"title2","body":"body2"},{"id":3,"title":"title3","body":"body3"}]
 ```
 
-確かにAPIが機能していることを確認しました。また、コンソールからも`VPCネットワーク > 外部IPアドレス`を確認すると、取得した静的IPアドレスと名前が確認できます。
+確かにAPIが機能していることが確認できました。
+また、コンソールからも`VPCネットワーク > 外部IPアドレス`を確認すると、取得した静的IPアドレスと名前が確認できます。
 
 ### ドメインの取得
 
@@ -1961,6 +1987,7 @@ Google Domainsでドメインを取得します。`新しいドメインを取�
 新しいレコードを作成して、ドメインを外部IPアドレスにポイントします。
 
 コンソールの`ネットワークサービス > Cloud DNS`にて`DNSゾーン`を作成します。
+ここでは取得したドメインを仮に`domain.page`とし、紐づくIPアドレスは`12.345.678.910`としています。
 
 ```
 ゾーンのタイプ: 公開
@@ -1997,7 +2024,7 @@ NSレコードにある4つのDNSサーバーをGoogle Domainsのネームサー
 DNSの設定が反映されたらAPIが返ってくるか動作確認をしみましょう。
 
 ```sh
-\gke-django-tutorial\curl http://domain.page/api/
+$\gke-django-tutorial\curl http://domain.page/api/
 ```
 
 #### Ingressにホストを反映する
@@ -2022,27 +2049,28 @@ spec:
       - path: /*
         backend:
           serviceName: frontend-node-service
-          servicePort: 3000
+          servicePort: 80
       - path: /api/*
         backend:
           serviceName: backend-node-service
-          servicePort: 8000
+          servicePort: 80
       - path: /admin/*
         backend:
           serviceName: backend-node-service
-          servicePort: 8000
+          servicePort: 80
 
 ```
 
 ingress.ymlを変更したので更新します。
 
 ```sh
-$\gke-django-tutorial\kubectl apply -f ingress.yml
+$\gke-django-tutorial\manifests\kubectl apply -f ingress.yml
 ```
 
 ### HTTPS化
 
-GoogleマネージドSSL証明書を構成してHTTPS化します。これには`ManagedCertificate`オブジェクトを作成します。
+GoogleマネージドSSL証明書を構成してHTTPS化します。マニフェストファイルからSSL証明書を取得します。
+これには`ManagedCertificate`オブジェクトを作成します。
 
 参考:
 - [Google マネージド SSL 証明書の使用](https://cloud.google.com/kubernetes-engine/docs/how-to/managed-certs?hl=ja)
@@ -2051,14 +2079,14 @@ GoogleマネージドSSL証明書を構成してHTTPS化します。これには
 apiVersion: networking.gke.io/v1beta1
 kind: ManagedCertificate
 metadata:
-  name: domain-certificate
+  name: [DOMAIN_SERTIFICATE]
 spec:
   domains:
     - domain.page
 ```
 
 ```sh
-$ kubectl apply -f vertificate.yml
+$\gke-django-tutorial\manifests\kubectl apply -f sertificate.yml
 ```
 
 HTTPへのリクエストがHTTPSにリダイレクトされるようにIngressのannotationを更新します。
@@ -2073,28 +2101,32 @@ metadata:
     kubernetes.io/ingress.class: gce
     kubernetes.io/ingress.global-static-ip-name: [STATIC_IP_NAME]
     kubernetes.io/ingress.allow-http: "false"  # HTTPSのみ受け付ける
-    networking.gke.io/managed-certificates: domain-certificate  # 使用したManagedCertificate
+    networking.gke.io/managed-certificates: [DOMAIN_SERTIFICATE]  # 使用したManagedCertificate
 # ...[省略]
 ```
 
 ```sh
-$ kubectl apply -f ingress.yml
+$\gke-django-tutorial\manifests\kubectl apply -f ingress.yml
 ```
 
 これで`https://domain.page/`にアクセスするとHTTPSができていることを確認できます。
-が、しかし画面には何も現れません。frontendのTodoを取得するエンドポイントは`http://localhost:8000/api/`のままになっているためです。
+が、しかし画面には何も現れません。frontendのTodoを取得するエンドポイントは`http://localhost:8080/api/`のままになっているためです。
 
 ### コンテナのロールアウト
 
 kubernetesでは古いポッドの停止と新しいポッドへの起動を繰り返してサービスをアップデートすることができます。
+
 今回はfrontendとbackendのコンテナを更新してきちんと機能することを確認します。
+
 コンテナの更新はコンテナのラベルを新しく指定することで新しいコンテナに適用することができます。
+
 コンテナのラベルはなにも考えずに`latest`としてDeploymentをデプロイしてきましたが、ラベルを使って使用するコンテナを指定することができます。
+
 今回は`v1.0`としてコンテナをロールアウトしてみたいと思います。
 
 #### frontend
 
-`frontend\src\App.js`でデータを取得するリクエスト先を`https://sawakome.page/api/`に変更します。
+`frontend\src\App.js`でデータを取得するリクエスト先を`https://domain.page/api/`に変更します。
 
 ```javascript
 import React, { Component } from 'react';
@@ -2152,38 +2184,36 @@ CORS_ORIGIN_WHITELIST = (
 #### コンテナイメージのビルド
 
 backend, frontendのDeploymentでは使用するコンテナを
-- `image: gcr.io/gke-django-tutorial/frontend:v1.0`
-- `image: gcr.io/gke-django-tutorial/backend:v1.0`
+- `image: gcr.io/gke-django-tutorial/web-front:v1.0`
+- `image: gcr.io/gke-django-tutorial/web-back:v1.0`
 のように書き換えてデプロイし直します。
 
 ```sh
 # イメージのビルド
-$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/backend:v1.0 ./backend
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/web-backend:v1.0 ./backend/web-back/.
 
-$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/frontend:v1.0 ./frontend
+$\gke-django-tutorial\docker image build --no-cache -t gcr.io/gke-django-tutorial/web-front:v1.0 ./frontend/web-front/.
 
 # イメージをGCRにアップロードする
-$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/backend:v1.0
+$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/web-back:v1.0
 
-$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/frontend:v1.0
+$\gke-django-tutorial\gcloud docker -- push gcr.io/gke-django-tutorial/web-front:v1.0
 
 # デプロイメントを更新する
-$\gke-django-tutorial\kubectl apply -f backend-deployment.yml
+$\gke-django-tutorial\manifests\kubectl apply -f backend-deployment.yml
 
-$\gke-django-tutorial\kubectl apply -f frontend-deployment.yml
+$\gke-django-tutorial\manifests\kubectl apply -f frontend-deployment.yml
 ```
 
 参考:
 - [コンテナ化されたウェブ アプリケーションのデプロイ](https://cloud.google.com/kubernetes-engine/docs/tutorials/hello-app)
 
-これで`https://domain.page/`にアクセスするとfrontendのTodoアイテムが表示されました。
-また、`https://domain.page/admin/`にアクセスするとbackendのDjangoの管理者画面に飛ぶことが確認できました。Ingressによるルーティングが機能していることがわかります。
+これで`https://domain.page/`にアクセスするとfrontend(React)のTodoアイテムが表示されました。
+また、`https://domain.page/admin/`にアクセスするとbackend(Django)の管理者画面に飛ぶことが確認できました。Ingressによるルーティングが機能していることがわかります。
 
 ## CloudStorageのCORSの構成
 
-`https:domain.page/admin/`のCSSが反映されていない、もしくは開発者ツールを確認すると
-`Cloud Storage has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`というエラーが発生している場合には
-バケットの[クロスオリジンリソースシェアリング(CORS)の構成](https://cloud.google.com/storage/docs/configuring-cors#gsutil)を設定しましょう。
+`https:domain.page/admin/`のCSSが反映されていない、もしくは開発者ツールを確認すると`Cloud Storage has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`というエラーが発生している場合にはバケットの[クロスオリジンリソースシェアリング(CORS)の構成](https://cloud.google.com/storage/docs/configuring-cors#gsutil)を設定しましょう。
 
 CORSの構成は構成を記述したjsonファイルをgsutilを使って追加することができます。
 
@@ -2227,38 +2257,36 @@ gcloud compute addresses delete [STATIC_IP_NAME] --global
 
 ## つまづいたところ
 
-KubernetesのキャッチアップとGKEにデプロイしたときにどういう挙動をしているのかを把握していくのに時間がかかってしまいました。
-GAEの手軽さが恋しいです。
+KubernetesのキャッチアップとGKEにデプロイしたときにどういう挙動をしているのかを把握していくのに時間がかかってしまいました。GAEの手軽さが恋しいです。
 
 - ヘルスチェックの存在
     ヘルスチェックの存在を知らずローカルで`docker-compose up`すれば動作するのにGKEにデプロイすると起動せず困りました。
-    Podへはヘルスチェックへのパスを通すことが大切ですね。。
+    当初はPodにリバースプロキシを設置しておらず、ヘルスチェック用にviewを追加していました。汎用性も考慮してPod内にリバースプロキシを追加して、ヘルスチェックに対応させました。
 
 - frontendのエンドポイントはどこ？
-    Pod内のコンテナ間はDjangoとcloud_sql_proxyのように`localhost:PORT`で通信できるので,frontendからbackendも同じように
-    通信できるはずだと思い込んでいました。frontendはクライアントのブラウザで実行されるのに`localhost`で解決できるはずないですね。。
+    Pod内のコンテナ間はDjangoとcloud_sql_proxyのように`localhost:PORT`で通信できるので,frontendからbackendも同じように`web-back:80`のように名前解決して通信できるはずだと思い込んでいました。frontendはクライアントのブラウザで実行されるのに`localhost`で解決できるはずないですね。。Kubernetesの名前空間やネットワーク周りは未だにはっきりと理解できていません。。
 
 - Kubernetesのリソースの種類
     DeploymentとServiceとIngressが何を意味しているのか、最初はまったくわかりませんでした。
-    特にServiceでもタイプによっては外部公開できるのでIngressとServiceの何が違うのか理解するのに時間がかかりました。。
-    公式のGKEにDjangoをデプロイする[チュートリアル](https://cloud.google.com/python/django/kubernetes-engine)ではLoadBalancerタイプのServiceの使って公開していて
-    これをIngress化するように進めていきました。
+    特にServiceでもタイプによっては外部公開できるのでIngressとServiceの何が違うのか理解するのに時間がかかりました。
+    公式のGKEにDjangoをデプロイする[チュートリアル](https://cloud.google.com/python/django/kubernetes-engine)ではLoadBalancerタイプのServiceの使って公開していて、これをIngress化するように進めていきました。
 
 ## まだできないこと
 
 - CI/CDの構築もするべきだった
-    frontendのエンドポイントの指定の方法につまづいたとき、`コード修正⇒イメージ作成⇒Push⇒更新`のサイクルが本当に面倒なのでCI/CDは最初にやるべきでした。
+    実際には`コード修正⇒イメージ作成⇒Push⇒更新`のサイクルを何度も行いました。
+    このサイクルが本当に面倒なのでCI/CDは最初にやるべきでした。
     そのうち記事を書きたいと考えています。
 
 - マネージドなSSLから複数TLS証明書の利用
-    正直この辺の仕組みを浅くしか理解できておらず、チュートリアルに沿って「とりあえず対応した」という形なので
+    正直この辺の仕組みを浅くしか理解できておらず、チュートリアルに沿って「とりあえず対応した」という形なのです。
     複数ドメインをIngressで捌く、みたいな形には適用できていません。セキュリティ面へのキャッチアップがまだまだ薄いです。。
 
-- ヘルスチェックとNginx
-    backendのDjangoですが、`ALLOWED_HOST`が`ALLOWED_HOST = [*]`のままになっていてこのまま公開するのは[危険です](https://docs.djangoproject.com/ja/3.0/ref/settings/#allowed-hosts)。
-    `ALLOWED_HOST = ["ドメイン名"]`のようにドメインに絞りたかったのですが、これをするとマスターノードからのヘルスチェックが通らなくなってしまい、
-    backendが機能しなくなってしまいました。
-    これはPodにリバースプロキシとしてNginxコンテナを追加してヘルスチェックはNginxがレスポンスを返して、アプリケーションへのリクエストはNginxがDjangoに通す形にすれば
-    Django側は`ALLOWED_HOST = ["ドメイン名"]`で済むわけです。ただNginxのキャッチアップがまだ追いついてないです。。
+- IngressコントローラーをNginx化する
+    HTTPS化できたタイミングで力尽きました。Nginxにすることで細かな設定ができるようなので対応したくて調べたりしましたが、GCEで間に合ってしまいました。
+
+
+
+
 
 

@@ -1,4 +1,4 @@
-# frontend/Dockerfile
+# frontend/web-back/Dockerfile
 FROM node:12.14.1
 
 WORKDIR /code
